@@ -116,7 +116,7 @@ export default async function AiSettingsPage() {
 
   return (
     <>
-      <AdminPageHeader title="AI settings" description="AI models used for product content. Keys are encrypted and never shown again after saving." back={{ href: "/admin/settings", label: "Settings" }} />
+      <AdminPageHeader title="AI settings" description="Enter a provider key once, load its models, and add the ones you want. Keys are encrypted on the server and never shown again." back={{ href: "/admin/settings", label: "Settings" }} />
       {migrationMissing ? (
         <p className="mb-4 rounded-[var(--radius-card)] border border-warn/30 bg-warn-tint p-4 text-sm">
           AI settings need the latest database migration (<code>20261009000010_homepage_ai_sync.sql</code>).
@@ -124,13 +124,8 @@ export default async function AiSettingsPage() {
       ) : null}
       {!isEncryptionConfigured() ? (
         <p className="mb-4 rounded-[var(--radius-card)] border border-warn/30 bg-warn-tint p-4 text-sm">
-          Set <code>AI_KEYS_ENCRYPTION_SECRET</code> (a random value of 32+ characters) as a <strong>Secret</strong> in Cloudflare → Worker → Settings → Variables and
-          Secrets. API keys can&rsquo;t be saved or used without it.
-        </p>
-      ) : null}
-      {!process.env.SUPABASE_SERVICE_ROLE_KEY ? (
-        <p className="mb-4 rounded-[var(--radius-card)] border border-warn/30 bg-warn-tint p-4 text-sm">
-          AI requests run on the server with <code>SUPABASE_SERVICE_ROLE_KEY</code>. Add it as a Cloudflare Secret to use AI.
+          AI runs on the server and needs the site&rsquo;s existing <code>SUPABASE_SERVICE_ROLE_KEY</code> server secret (also used for stock imports). AI provider
+          keys themselves are entered here, not in Cloudflare.
         </p>
       ) : null}
       <AiSettingsManager

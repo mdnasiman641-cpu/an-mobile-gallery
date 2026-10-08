@@ -127,7 +127,7 @@ Cloudflare → Worker `an-mobile-gallery` → Settings → Variables and Secrets
 | `STOCK_EXPORT_TOKEN` | Secret | optional |
 | `STOCK_SOURCE_NAME` | Text | optional, default `lovable` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Secret | required for imports and AI |
-| `AI_KEYS_ENCRYPTION_SECRET` | Secret | required for AI |
+| `AI_KEYS_ENCRYPTION_SECRET` | Secret | optional; AI provider keys are managed in Admin → Settings → AI |
 
 Never put these in `.env*` files: `npm run cf:build` refuses to build if you do.
 

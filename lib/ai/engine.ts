@@ -101,7 +101,7 @@ function service() {
 }
 
 async function loadDeps(): Promise<Omit<RouterDeps, "onlyModelId" | "validate">> {
-  if (!isEncryptionConfigured()) throw new AiSetupError("AI needs AI_KEYS_ENCRYPTION_SECRET (32+ characters) as a server secret.");
+  if (!isEncryptionConfigured()) throw new AiSetupError("AI needs SUPABASE_SERVICE_ROLE_KEY as a server secret.");
   const db = service();
   const [modelsRes, healthRes, settingsRes] = await Promise.all([
     db

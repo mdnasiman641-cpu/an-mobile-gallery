@@ -2,9 +2,11 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDown, ArrowUp, Plus } from "lucide-react";
+import { ArrowDown, ArrowUp, DownloadCloud, Plus, Search } from "lucide-react";
 import {
+  addSelectedModelsAction,
   deleteAiModelAction,
+  loadProviderModelsAction,
   moveAiModelAction,
   resetAiHealthAction,
   saveAiModelAction,
@@ -18,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox, Field, Input, Select } from "@/components/ui/form";
 import { Badge } from "@/components/ui/misc";
 import { DEFAULT_BASE_URL } from "@/lib/ai/providers";
+import type { DiscoveredModel } from "@/lib/ai/model-discovery";
 import { AI_CAPABILITIES, CAPABILITY_LABELS, ROUTING_LABELS, ROUTING_STRATEGIES, type AiCapability, type ProviderType, type RoutingStrategy } from "@/lib/ai/types";
 
 export interface ModelRowView extends ModelHealthView {
@@ -184,16 +187,21 @@ export function AiSettingsManager({
         </form>
       </section>
 
+      <AddModelsPanel models={models} readOnly={readOnly} onAdded={() => router.refresh()} />
+
       <section>
         <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-lg font-bold">Models and health</h2>
-          <Button size="sm" onClick={openNew} disabled={readOnly}>
-            <Plus className="h-4 w-4" aria-hidden /> Add model
+          <div>
+            <h2 className="text-lg font-bold">AI models and health</h2>
+            <p className="text-sm text-ink-soft">Tried top to bottom. If one fails or hits its limit, the next one is used automatically.</p>
+          </div>
+          <Button size="sm" variant="ghost" onClick={openNew} disabled={readOnly}>
+            <Plus className="h-4 w-4" aria-hidden /> Add a model by name
           </Button>
         </div>
         {models.length === 0 ? (
           <p className="rounded-[var(--radius-card)] border border-dashed border-line-strong bg-surface p-6 text-center text-sm text-ink-soft">
-            No AI models yet. Add one (for example a Google Gemini model) to start generating product content.
+            No AI models yet. Use &ldquo;Load models&rdquo; above to add some.
           </p>
         ) : (
           <ol className="space-y-2">
@@ -224,6 +232,24 @@ export function AiSettingsManager({
                       ))}
                     </p>
                     <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-ink-soft sm:grid-cols-4">
+                      <div>
+                        <dt className="inline text-ink-mute">Timeout </dt>
+                        <dd className="inline">{m.timeoutSeconds}s</dd>
+                      </div>
+                      <div>
+                        <dt className="inline text-ink-mute">Max retries </dt>
+                        <dd className="inline">{m.maxRetries}</dd>
+                      </div>
+                      <div>
+                        <dt className="inline text-ink-mute">Limits </dt>
+                        <dd className="inline">{m.rpmLimit || m.rpdLimit ? `${m.rpmLimit ?? "–"} RPM · ${m.rpdLimit ?? "–"} RPD` : "none set"}</dd>
+                      </div>
+                      <div>
+                        <dt className="inline text-ink-mute">Cost / quality </dt>
+                        <dd className="inline">
+                          {m.costIn !== null || m.costOut !== null ? `${m.costIn ?? 0} / ${m.costOut ?? 0} per 1M` : "cost –"} · {m.qualityScore ? `Q${m.qualityScore}` : "Q –"}
+                        </dd>
+                      </div>
                       <div>
                         <dt className="inline text-ink-mute">Last success </dt>
                         <dd className="inline">{relativeTime(m.lastSuccessAt)}</dd>
@@ -261,8 +287,8 @@ export function AiSettingsManager({
                     <Button variant="ghost" size="sm" disabled={readOnly || pending} onClick={() => run(m.id, () => resetAiHealthAction(m.id))}>
                       Reset health
                     </Button>
-                    <ConfirmButton title={`Remove ${m.displayName}?`} description="The model and its saved key are deleted. Job history keeps its name." confirmLabel="Remove" disabled={readOnly} onConfirm={async () => { const r = await deleteAiModelAction(m.id); router.refresh(); return r; }}>
-                      Remove
+                    <ConfirmButton title={`Delete ${m.displayName}?`} description="This model configuration and its saved key copy are deleted. Other models from the same provider keep working. Job history keeps its name." confirmLabel="Delete" disabled={readOnly} onConfirm={async () => { const r = await deleteAiModelAction(m.id); router.refresh(); return r; }}>
+                      Delete
                     </ConfirmButton>
                   </div>
                 </div>
@@ -273,7 +299,8 @@ export function AiSettingsManager({
         )}
         {editing === "new" ? (
           <div className="mt-3 rounded-[var(--radius-card)] border border-line bg-surface p-4">
-            <h3 className="font-semibold">Add model</h3>
+            <h3 className="font-semibold">Add a model by name</h3>
+            <p className="text-sm text-ink-soft">Only needed for providers that don&rsquo;t offer a model list.</p>
             <ModelForm f={f} set={set} isNew keyHint={null} pending={pending} onSave={save} onCancel={() => setEditing(null)} />
           </div>
         ) : null}
@@ -398,5 +425,211 @@ function ModelForm({
         </Button>
       </div>
     </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Enter key once → Load models → select → Add selected models
+// ---------------------------------------------------------------------------
+
+function AddModelsPanel({ models, readOnly, onAdded }: { models: ModelRowView[]; readOnly: boolean; onAdded: () => void }) {
+  const [type, setType] = useState<ProviderType>("gemini");
+  const [providerName, setProviderName] = useState("Google");
+  const [baseUrl, setBaseUrl] = useState(DEFAULT_BASE_URL.gemini);
+  const [apiKey, setApiKey] = useState("");
+  const [useKeyOf, setUseKeyOf] = useState("");
+  const [found, setFound] = useState<DiscoveredModel[] | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [query, setQuery] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const [timeout, setTimeoutSec] = useState("45");
+  const [retries, setRetries] = useState("0");
+  const [loading, startLoad] = useTransition();
+  const [adding, startAdd] = useTransition();
+
+  // Saved keys that can be reused: one entry per provider type + base URL + key.
+  const savedKeys = Array.from(
+    new Map(
+      models
+        .filter((m) => m.hasKey && m.providerType === type)
+        .map((m) => [`${m.apiBaseUrl}|${m.keyHint}`, { id: m.id, label: `${m.providerName} key ${m.keyHint ?? ""} (saved with ${m.displayName})`, baseUrl: m.apiBaseUrl }]),
+    ).values(),
+  );
+  const configured = new Set(models.filter((m) => m.providerType === type).map((m) => `${m.apiBaseUrl}|${m.modelName}`));
+
+  function changeType(t: ProviderType) {
+    setType(t);
+    setBaseUrl(t === "openai_compatible" ? "https://" : DEFAULT_BASE_URL[t]);
+    setProviderName(t === "gemini" ? "Google" : t === "openai" ? "OpenAI" : "");
+    setUseKeyOf("");
+    setFound(null);
+    setSelected([]);
+  }
+
+  const credentials = () => ({ provider_type: type, api_base_url: baseUrl, ...(useKeyOf ? { use_key_of: useKeyOf } : { api_key: apiKey }) });
+
+  function load() {
+    startLoad(async () => {
+      const res = await loadProviderModelsAction(credentials());
+      if (toastResult(res) && res.data) {
+        setFound(res.data.models);
+        setBaseUrl(res.data.baseUrl);
+        setSelected([]);
+      }
+    });
+  }
+
+  function add() {
+    // in the order the admin ticked them (#1 is tried first)
+    const picked = selected.map((sid) => (found ?? []).find((m) => m.id === sid)).filter((m): m is DiscoveredModel => Boolean(m));
+    startAdd(async () => {
+      const res = await addSelectedModelsAction({
+        ...credentials(),
+        provider_name: providerName || "Custom",
+        timeout_seconds: timeout,
+        max_retries: retries,
+        models: picked.map((m) => ({
+          id: m.id,
+          label: m.label,
+          capabilities: m.capabilities.length ? m.capabilities : ["text"],
+          cost_input_per_million: m.costInputPerMillion,
+          cost_output_per_million: m.costOutputPerMillion,
+        })),
+      });
+      if (toastResult(res)) {
+        setSelected([]);
+        setApiKey("");
+        onAdded();
+      }
+    });
+  }
+
+  const q = query.trim().toLowerCase();
+  const visible = (found ?? []).filter((m) => (showAll || !m.nonChat) && (!q || m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)));
+  const hiddenCount = (found ?? []).filter((m) => m.nonChat).length;
+  const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  const id = (n: string) => `addm-${n}`;
+
+  return (
+    <section aria-labelledby="add-models" className="rounded-[var(--radius-card)] border border-line bg-surface p-4 sm:p-5">
+      <h2 id="add-models" className="text-lg font-bold">
+        Add models
+      </h2>
+      <p className="text-sm text-ink-soft">Enter one API key, load the provider&rsquo;s models, tick the ones you want (for example 3 or 4) and add them.</p>
+
+      <div className="mt-4 grid gap-4 md:grid-cols-3">
+        <Field label="Provider type" htmlFor={id("type")}>
+          <Select id={id("type")} value={type} onChange={(e) => changeType(e.target.value as ProviderType)} disabled={readOnly}>
+            {(Object.keys(PROVIDER_LABEL) as ProviderType[]).map((t) => (
+              <option key={t} value={t}>
+                {PROVIDER_LABEL[t]}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Provider name" htmlFor={id("pname")} hint="Shown in the list, e.g. Google, OpenRouter">
+          <Input id={id("pname")} value={providerName} maxLength={80} onChange={(e) => setProviderName(e.target.value)} disabled={readOnly} />
+        </Field>
+        <Field label="API base URL" htmlFor={id("base")}>
+          <Input id={id("base")} value={baseUrl} onChange={(e) => { setBaseUrl(e.target.value); setUseKeyOf(""); setFound(null); }} disabled={readOnly} />
+        </Field>
+        <Field label="API key" htmlFor={id("key")} hint="Sent only to this site's server; encrypted when saved and never shown again." className="md:col-span-2">
+          <Input
+            id={id("key")}
+            type="password"
+            autoComplete="new-password"
+            spellCheck={false}
+            placeholder={useKeyOf ? "Using a saved key" : ""}
+            value={apiKey}
+            onChange={(e) => { setApiKey(e.target.value); if (e.target.value) setUseKeyOf(""); }}
+            disabled={readOnly || Boolean(useKeyOf)}
+          />
+        </Field>
+        {savedKeys.length ? (
+          <Field label="Or use a saved key" htmlFor={id("saved")}>
+            <Select
+              id={id("saved")}
+              value={useKeyOf}
+              onChange={(e) => {
+                setUseKeyOf(e.target.value);
+                const k = savedKeys.find((x) => x.id === e.target.value);
+                if (k) { setBaseUrl(k.baseUrl); setApiKey(""); }
+                setFound(null);
+              }}
+              disabled={readOnly}
+            >
+              <option value="">Type a new key</option>
+              {savedKeys.map((k) => (
+                <option key={k.id} value={k.id}>
+                  {k.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : null}
+      </div>
+
+      <div className="mt-4">
+        <Button onClick={load} loading={loading} disabled={readOnly || (!apiKey && !useKeyOf) || !/^https:\/\//.test(baseUrl)}>
+          <DownloadCloud className="h-4 w-4" aria-hidden /> Load models
+        </Button>
+      </div>
+
+      {found ? (
+        <div className="mt-5 border-t border-line pt-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="font-semibold">Available models ({visible.length})</p>
+            <div className="relative min-w-52 flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-mute" aria-hidden />
+              <Input aria-label="Filter models" className="h-9 pl-9" placeholder="Filter…" value={query} onChange={(e) => setQuery(e.target.value)} />
+            </div>
+            {hiddenCount ? (
+              <Checkbox label={`Show ${hiddenCount} non-text models`} checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+            ) : null}
+          </div>
+          <ul className="mt-3 max-h-96 divide-y divide-line overflow-y-auto rounded-lg border border-line" aria-label="Available models">
+            {visible.map((m) => {
+              const isAdded = configured.has(`${baseUrl}|${m.id}`);
+              const order = selected.indexOf(m.id);
+              return (
+                <li key={m.id}>
+                  <label className={`flex cursor-pointer items-start gap-3 px-3 py-2.5 ${isAdded ? "opacity-60" : "hover:bg-paper"}`}>
+                    <input type="checkbox" className="mt-1 h-4 w-4 accent-[var(--color-signal)]" checked={order >= 0} disabled={isAdded} onChange={() => toggle(m.id)} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold">
+                        {m.label} {order >= 0 ? <Badge tone="signal">#{order + 1}</Badge> : null} {isAdded ? <Badge>Already added</Badge> : null}
+                      </span>
+                      <span className="block truncate text-xs text-ink-mute">
+                        <code>{m.id}</code>
+                        {m.contextWindow ? ` · ${Math.round(m.contextWindow / 1000)}k context` : ""}
+                        {m.costInputPerMillion !== null ? ` · ${m.costInputPerMillion}/${m.costOutputPerMillion ?? 0} per 1M` : ""}
+                      </span>
+                      {m.description ? <span className="block truncate text-xs text-ink-soft">{m.description}</span> : null}
+                    </span>
+                  </label>
+                </li>
+              );
+            })}
+            {visible.length === 0 ? <li className="px-3 py-3 text-sm text-ink-mute">No models match.</li> : null}
+          </ul>
+
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <Field label="Timeout (s)" htmlFor={id("timeout")} className="w-28">
+              <Input id={id("timeout")} type="number" min={1} max={120} value={timeout} onChange={(e) => setTimeoutSec(e.target.value)} />
+            </Field>
+            <Field label="Max retries" htmlFor={id("retries")} className="w-28">
+              <Input id={id("retries")} type="number" min={0} max={3} value={retries} onChange={(e) => setRetries(e.target.value)} />
+            </Field>
+            <Button onClick={add} loading={adding} disabled={readOnly || selected.length === 0}>
+              Add selected models ({selected.length})
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-ink-mute">
+            Models are added in the order you ticked them (#1 is tried first). Capabilities are suggested from what the provider reports; adjust them, RPM/RPD limits,
+            cost and quality with Edit afterwards.
+          </p>
+        </div>
+      ) : null}
+    </section>
   );
 }

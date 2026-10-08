@@ -86,7 +86,7 @@ Workers & Pages → `an-mobile-gallery` → **Settings → Variables and Secrets
 | `NEXT_PUBLIC_SUPABASE_URL` | Text | `https://YOUR-REF.supabase.co` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Text | anon / publishable key |
 | `SUPABASE_SERVICE_ROLE_KEY` | **Secret** | service_role key (needed for Admin → Staff users, the AI assistant and stock import) |
-| `AI_KEYS_ENCRYPTION_SECRET` | **Secret** | 32+ random characters; encrypts AI API keys (Admin → Settings → AI) |
+| `AI_KEYS_ENCRYPTION_SECRET` | **Secret** | optional. AI provider keys are entered in Admin → Settings → AI and encrypted with a key derived from `SUPABASE_SERVICE_ROLE_KEY`; set this only if you want a separate encryption secret |
 | `STOCK_WEBHOOK_SECRET` | **Secret** | 32+ random characters; signs stock-system webhooks (docs/STOCK-INTEGRATION.md) |
 | `STOCK_EXPORT_URL` / `STOCK_EXPORT_TOKEN` | Text / **Secret** | optional, for "Sync stock now" |
 
