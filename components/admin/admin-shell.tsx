@@ -5,18 +5,21 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BadgePercent,
+  Bot,
   Boxes,
   ExternalLink,
   FileText,
   FolderTree,
   Image as ImageIcon,
   LayoutDashboard,
+  LayoutTemplate,
   Menu,
   MessageSquareText,
   Package,
   Search,
   Settings,
   ShoppingCart,
+  Sparkles,
   Tags,
   UserCog,
   Users,
@@ -29,6 +32,8 @@ import type { StaffRole } from "@/types";
 const NAV: { href: string; label: string; Icon: typeof Package; min: StaffRole }[] = [
   { href: "/admin/dashboard", label: "Dashboard", Icon: LayoutDashboard, min: "editor" },
   { href: "/admin/products", label: "Products", Icon: Package, min: "editor" },
+  { href: "/admin/ai-products", label: "AI Products", Icon: Sparkles, min: "editor" },
+  { href: "/admin/homepage", label: "Homepage", Icon: LayoutTemplate, min: "editor" },
   { href: "/admin/categories", label: "Categories", Icon: FolderTree, min: "editor" },
   { href: "/admin/brands", label: "Brands", Icon: Tags, min: "editor" },
   { href: "/admin/inventory", label: "Inventory", Icon: Boxes, min: "editor" },
@@ -40,6 +45,7 @@ const NAV: { href: string; label: string; Icon: typeof Package; min: StaffRole }
   { href: "/admin/pages", label: "Pages", Icon: FileText, min: "editor" },
   { href: "/admin/seo", label: "SEO", Icon: Search, min: "admin" },
   { href: "/admin/settings", label: "Settings", Icon: Settings, min: "admin" },
+  { href: "/admin/settings/ai", label: "AI settings", Icon: Bot, min: "admin" },
   { href: "/admin/users", label: "Staff users", Icon: UserCog, min: "super_admin" },
 ];
 
@@ -64,11 +70,15 @@ export function AdminShell({
   };
 
   const items = NAV.filter((n) => RANK[role] >= RANK[n.min]);
+  // the most specific matching link is active (e.g. AI settings, not Settings)
+  const activeHref = items
+    .filter((n) => pathname === n.href || pathname.startsWith(`${n.href}/`))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
 
   const nav = (
     <nav aria-label="Admin" className="flex flex-col gap-0.5 p-3">
       {items.map(({ href, label, Icon }) => {
-        const active = pathname === href || pathname.startsWith(`${href}/`);
+        const active = href === activeHref;
         return (
           <Link
             key={href}

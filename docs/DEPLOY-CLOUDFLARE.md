@@ -85,7 +85,10 @@ Workers & Pages → `an-mobile-gallery` → **Settings → Variables and Secrets
 | `NEXT_PUBLIC_SITE_URL` | Text | `https://YOUR-DOMAIN` |
 | `NEXT_PUBLIC_SUPABASE_URL` | Text | `https://YOUR-REF.supabase.co` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Text | anon / publishable key |
-| `SUPABASE_SERVICE_ROLE_KEY` | **Secret** | service_role key (optional: only for Admin → Staff users "create account") |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Secret** | service_role key (needed for Admin → Staff users, the AI assistant and stock import) |
+| `AI_KEYS_ENCRYPTION_SECRET` | **Secret** | 32+ random characters; encrypts AI API keys (Admin → Settings → AI) |
+| `STOCK_WEBHOOK_SECRET` | **Secret** | 32+ random characters; signs stock-system webhooks (docs/STOCK-INTEGRATION.md) |
+| `STOCK_EXPORT_URL` / `STOCK_EXPORT_TOKEN` | Text / **Secret** | optional, for "Sync stock now" |
 
 The deploy commands use `--keep-vars`, so these are not wiped by later deploys. Do not set `NEXT_IMAGE_*` or `NEXT_OUTPUT` here.
 
@@ -95,6 +98,11 @@ Then in the domain's dashboard: **Rules → Redirect Rules → "Redirect from WW
 Do **not** add a "Cache Everything" cache rule: the Worker already caches public pages in R2, and caching HTML at the CDN would also cache signed-in pages.
 
 ## 5. Supabase dashboard
+
+**Database migration (Homepage Management, AI, stock import):** SQL Editor → run
+`supabase/migrations/20261009000010_homepage_ai_sync.sql` once. Until then the homepage keeps its built-in layout
+and the new admin pages show a "run the migration" notice; nothing else is affected.
+
 
 Authentication → **URL Configuration**:
 - Site URL: `https://YOUR-DOMAIN`

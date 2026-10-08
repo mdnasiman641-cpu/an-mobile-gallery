@@ -21,6 +21,7 @@ export const CACHE_TAGS = {
   settings: "settings",
   navigation: "navigation", // brands + categories
   catalog: "catalog",
+  homepage: "homepage",
 } as const;
 
 type Tag = (typeof CACHE_TAGS)[keyof typeof CACHE_TAGS];
@@ -59,4 +60,10 @@ export function invalidateTaxonomy() {
 export function invalidateContent() {
   expireTags([CACHE_TAGS.settings]);
   revalidatePath("/", "layout");
+}
+
+/** Homepage Management saved: refresh only the homepage. */
+export function invalidateHomepage() {
+  expireTags([CACHE_TAGS.homepage]);
+  revalidatePath("/");
 }

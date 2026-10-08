@@ -25,7 +25,7 @@ const ROOT = process.cwd();
 const mode = process.argv[2];
 const ENV_FILES = [".env", ".env.local", ".env.production", ".env.production.local"];
 const REQUIRED_PUBLIC = ["NEXT_PUBLIC_SITE_URL", "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"];
-const SECRET_KEYS = ["SUPABASE_SERVICE_ROLE_KEY"];
+const SECRET_KEYS = ["SUPABASE_SERVICE_ROLE_KEY", "AI_KEYS_ENCRYPTION_SECRET", "STOCK_WEBHOOK_SECRET", "STOCK_EXPORT_TOKEN"];
 
 function parseEnvFile(file) {
   const out = {};
