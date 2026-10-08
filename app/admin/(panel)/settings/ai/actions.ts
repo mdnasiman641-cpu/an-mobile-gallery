@@ -4,17 +4,17 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { assertStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { encryptSecret, isEncryptionConfigured, keyHint } from "@/lib/ai/crypto";
+import { encryptSecret, encryptionAvailable, keyHint } from "@/lib/ai/crypto";
 import { AiSetupError, resetModelHealth, runAi } from "@/lib/ai/engine";
 import { sanitizeMessage } from "@/lib/ai/errors";
 import { AI_CAPABILITIES, PROVIDER_TYPES, ROUTING_STRATEGIES } from "@/lib/ai/types";
 import { AiProviderError } from "@/lib/ai/errors";
 import { decryptSecret } from "@/lib/ai/crypto";
 import { discoverModels, normalizeBaseUrl, type DiscoveredModel } from "@/lib/ai/model-discovery";
-import { getServiceClient } from "@/lib/supabase/admin";
 import type { ActionResult } from "@/types";
 
 const PATH = "/admin/settings/ai";
+const KEY_STORE_UNAVAILABLE = "The secure key store is not available. On Cloudflare it uses the Worker's R2 binding; when running locally, set AI_KEYS_ENCRYPTION_SECRET.";
 const uuid = z.string().uuid();
 const optionalInt = (min: number, max: number) =>
   z
@@ -61,7 +61,7 @@ export async function saveAiModelAction(id: string | null, values: unknown): Pro
 
   const row: Record<string, unknown> = { ...v, timeout_ms: timeout_seconds * 1000 };
   if (api_key) {
-    if (!isEncryptionConfigured()) return { ok: false, message: "API keys can be saved once SUPABASE_SERVICE_ROLE_KEY is set on the server." };
+    if (!(await encryptionAvailable())) return { ok: false, message: KEY_STORE_UNAVAILABLE };
     row.api_key_ciphertext = await encryptSecret(api_key);
     row.api_key_hint = keyHint(api_key);
   } else if (id === null) {
@@ -185,8 +185,8 @@ const credentialSchema = z.object({
 async function resolveKey(input: z.infer<typeof credentialSchema>): Promise<string> {
   if (input.api_key) return input.api_key;
   if (!input.use_key_of) throw new AiProviderError("NO_KEY", "Enter the API key, or choose a saved key.");
-  const db = getServiceClient();
-  if (!db) throw new AiProviderError("NO_KEY", "SUPABASE_SERVICE_ROLE_KEY is not set on the server.");
+  // admin session; RLS limits this to staff, and the value is only ciphertext
+  const db = await createClient();
   const { data } = await db.from("ai_models").select("api_key_ciphertext").eq("id", input.use_key_of).maybeSingle();
   const stored = (data as { api_key_ciphertext: string | null } | null)?.api_key_ciphertext;
   if (!stored) throw new AiProviderError("NO_KEY", "That model has no saved key.");
@@ -251,7 +251,7 @@ export async function addSelectedModelsAction(values: unknown): Promise<ActionRe
   if ("error" in session) return { ok: false, message: session.error };
   const parsed = addSchema.safeParse(values);
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Please check the selection." };
-  if (!isEncryptionConfigured()) return { ok: false, message: "API keys can be saved once SUPABASE_SERVICE_ROLE_KEY is set on the server." };
+  if (!(await encryptionAvailable())) return { ok: false, message: KEY_STORE_UNAVAILABLE };
   const v = parsed.data;
 
   let key: string;

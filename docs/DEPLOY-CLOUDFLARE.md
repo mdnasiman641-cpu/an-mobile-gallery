@@ -85,8 +85,8 @@ Workers & Pages → `an-mobile-gallery` → **Settings → Variables and Secrets
 | `NEXT_PUBLIC_SITE_URL` | Text | `https://YOUR-DOMAIN` |
 | `NEXT_PUBLIC_SUPABASE_URL` | Text | `https://YOUR-REF.supabase.co` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Text | anon / publishable key |
-| `SUPABASE_SERVICE_ROLE_KEY` | **Secret** | service_role key (needed for Admin → Staff users, the AI assistant and stock import) |
-| `AI_KEYS_ENCRYPTION_SECRET` | **Secret** | optional. AI provider keys are entered in Admin → Settings → AI and encrypted with a key derived from `SUPABASE_SERVICE_ROLE_KEY`; set this only if you want a separate encryption secret |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Secret** | service_role key: needed for Admin → Staff users and the stock-system webhook import (no signed-in user there). Not needed for AI settings or AI generation from Admin |
+| (AI provider keys) | — | **not configured in Cloudflare.** Entered in Admin → Settings → AI, encrypted with a key kept in the Worker's private R2 bucket (`__app-secrets/…`, created automatically; don't delete it) |
 | `STOCK_WEBHOOK_SECRET` | **Secret** | 32+ random characters; signs stock-system webhooks (docs/STOCK-INTEGRATION.md) |
 | `STOCK_EXPORT_URL` / `STOCK_EXPORT_TOKEN` | Text / **Secret** | optional, for "Sync stock now" |
 
@@ -99,8 +99,8 @@ Do **not** add a "Cache Everything" cache rule: the Worker already caches public
 
 ## 5. Supabase dashboard
 
-**Database migration (Homepage Management, AI, stock import):** SQL Editor → run
-`supabase/migrations/20261009000010_homepage_ai_sync.sql` once. Until then the homepage keeps its built-in layout
+**Database migrations (Homepage Management, AI, stock import):** SQL Editor → run
+`supabase/migrations/20261009000010_homepage_ai_sync.sql`, then `20261009000011_ai_staff_access.sql`, once each. Until then the homepage keeps its built-in layout
 and the new admin pages show a "run the migration" notice; nothing else is affected.
 
 

@@ -1,5 +1,5 @@
 import "server-only";
-import { getServiceClient } from "@/lib/supabase/admin";
+import { aiDb } from "@/lib/ai/db";
 import { AiSetupError, runAi } from "@/lib/ai/engine";
 import { parseJsonObject } from "@/lib/ai/providers";
 import {
@@ -32,11 +32,6 @@ export interface JobOutcome {
   keptManual?: string[];
 }
 
-function db() {
-  const c = getServiceClient();
-  if (!c) throw new AiSetupError("AI needs SUPABASE_SERVICE_ROLE_KEY as a server secret.");
-  return c;
-}
 
 async function sha256(text: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -48,7 +43,7 @@ export async function enqueueAiJob(
   task: ContentTask,
   opts: { replaceManual?: boolean; trigger?: "manual" | "import" | "retry"; requestedBy?: string | null } = {},
 ): Promise<{ jobId: string; alreadyQueued: boolean }> {
-  const client = db();
+  const client = await aiDb();
   const { data, error } = await client
     .from("ai_jobs")
     .insert({
@@ -98,7 +93,7 @@ interface ProductRow {
 }
 
 export async function processAiJob(jobId: string): Promise<JobOutcome> {
-  const client = db();
+  const client = await aiDb();
   const staleBefore = new Date(Date.now() - STALE_MS).toISOString();
   const { data: claimed } = await client
     .from("ai_jobs")
@@ -283,7 +278,7 @@ function str(v: unknown): string | null {
 
 /** Process up to `limit` queued jobs, oldest first (Admin → AI Products → Process queue). */
 export async function processPendingJobs(limit = 2): Promise<JobOutcome[]> {
-  const client = db();
+  const client = await aiDb();
   const staleBefore = new Date(Date.now() - STALE_MS).toISOString();
   const { data } = await client
     .from("ai_jobs")

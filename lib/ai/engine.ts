@@ -1,6 +1,6 @@
 import "server-only";
-import { getServiceClient } from "@/lib/supabase/admin";
-import { decryptSecret, isEncryptionConfigured } from "@/lib/ai/crypto";
+import { aiDb } from "@/lib/ai/db";
+import { decryptSecret } from "@/lib/ai/crypto";
 import { emptyHealth, runWithFailover, type RouterDeps } from "@/lib/ai/router";
 import type { AiCapability, AiModelConfig, AiModelHealth, AiRequest, AiResponse, AttemptRecord, FailoverResult, ProviderType, RoutingStrategy } from "@/lib/ai/types";
 
@@ -94,15 +94,8 @@ function healthToRow(h: AiModelHealth): HealthRow & { updated_at: string } {
   };
 }
 
-function service() {
-  const db = getServiceClient();
-  if (!db) throw new AiSetupError("AI needs SUPABASE_SERVICE_ROLE_KEY as a server secret.");
-  return db;
-}
-
 async function loadDeps(): Promise<Omit<RouterDeps, "onlyModelId" | "validate">> {
-  if (!isEncryptionConfigured()) throw new AiSetupError("AI needs SUPABASE_SERVICE_ROLE_KEY as a server secret.");
-  const db = service();
+  const db = await aiDb();
   const [modelsRes, healthRes, settingsRes] = await Promise.all([
     db
       .from("ai_models")
@@ -112,7 +105,7 @@ async function loadDeps(): Promise<Omit<RouterDeps, "onlyModelId" | "validate">>
     db.from("ai_model_health").select("*"),
     db.from("ai_settings").select("routing_strategy, max_attempts").eq("id", 1).maybeSingle(),
   ]);
-  if (modelsRes.error) throw new AiSetupError("AI tables are missing. Run the latest database migration.");
+  if (modelsRes.error) throw new AiSetupError("AI settings can't be read. Run the latest database migrations (0010 and 0011) and sign in as staff.");
   const models: AiModelConfig[] = [];
   for (const r of (modelsRes.data as ModelRow[]) ?? []) {
     let apiKey: string | null = null;
@@ -150,7 +143,7 @@ async function loadDeps(): Promise<Omit<RouterDeps, "onlyModelId" | "validate">>
 }
 
 async function persist(touched: AiModelHealth[], attempts: AttemptRecord[], jobId: string | null) {
-  const db = service();
+  const db = await aiDb();
   await Promise.all([
     touched.length ? db.from("ai_model_health").upsert(touched.map(healthToRow), { onConflict: "model_id" }) : null,
     jobId && attempts.length
@@ -186,6 +179,6 @@ export async function runAi(
 
 /** Clear a model's cooldown and failure counters (Admin → Reset health). */
 export async function resetModelHealth(modelId: string) {
-  const db = service();
+  const db = await aiDb();
   await db.from("ai_model_health").upsert(healthToRow(emptyHealth(modelId)), { onConflict: "model_id" });
 }

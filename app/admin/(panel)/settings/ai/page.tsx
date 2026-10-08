@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { isEncryptionConfigured } from "@/lib/ai/crypto";
+import { encryptionAvailable } from "@/lib/ai/crypto";
 import { meetsRequirements, orderModels } from "@/lib/ai/router";
 import type { AiCapability, AiModelConfig, HealthStatus, ProviderType, RoutingStrategy } from "@/lib/ai/types";
 import { AdminPageHeader } from "@/components/admin/page-header";
@@ -122,10 +122,10 @@ export default async function AiSettingsPage() {
           AI settings need the latest database migration (<code>20261009000010_homepage_ai_sync.sql</code>).
         </p>
       ) : null}
-      {!isEncryptionConfigured() ? (
+      {!(await encryptionAvailable()) ? (
         <p className="mb-4 rounded-[var(--radius-card)] border border-warn/30 bg-warn-tint p-4 text-sm">
-          AI runs on the server and needs the site&rsquo;s existing <code>SUPABASE_SERVICE_ROLE_KEY</code> server secret (also used for stock imports). AI provider
-          keys themselves are entered here, not in Cloudflare.
+          The secure key store isn&rsquo;t available on this server. On Cloudflare it works automatically (the Worker&rsquo;s private R2 bucket); for local
+          development set <code>AI_KEYS_ENCRYPTION_SECRET</code>.
         </p>
       ) : null}
       <AiSettingsManager
