@@ -32,19 +32,28 @@ export async function saveTaxonomyAction(
   }
 
   const supabase = await createClient();
-  const table = kind === "brand" ? "brands" : "categories";
-  const row =
-    kind === "brand"
-      ? { ...rest, slug: slug ?? "", logo_url: image }
-      : { ...rest, slug: slug ?? "", image_url: image, parent_id: parent_id ?? null };
+  const base = { ...rest, slug: slug ?? "" };
 
-  const res = id
-    ? await supabase.from(table).update(row).eq("id", id).select("id").single()
-    : await supabase.from(table).insert(row).select("id").single();
-  if (res.error) return { ok: false, message: `${kind === "brand" ? "Brand" : "Category"} couldn't be saved: ${res.error.message}` };
+  // One fully typed query per kind (brands.logo_url vs categories.image_url +
+  // parent_id), so Supabase checks each row against a single, known shape.
+  let res: { data: { id: string } | null; error: { message: string } | null };
+  if (kind === "brand") {
+    const row = { ...base, logo_url: image };
+    res = id
+      ? await supabase.from("brands").update(row).eq("id", id).select("id").single()
+      : await supabase.from("brands").insert(row).select("id").single();
+  } else {
+    const row = { ...base, image_url: image, parent_id: parent_id ?? null };
+    res = id
+      ? await supabase.from("categories").update(row).eq("id", id).select("id").single()
+      : await supabase.from("categories").insert(row).select("id").single();
+  }
+  if (res.error || !res.data) {
+    return { ok: false, message: `${kind === "brand" ? "Brand" : "Category"} couldn't be saved: ${res.error?.message ?? "no row returned"}` };
+  }
 
   invalidateTaxonomy();
-  return { ok: true, message: id ? "Saved" : `${kind === "brand" ? "Brand" : "Category"} added`, data: { id: (res.data as { id: string }).id } };
+  return { ok: true, message: id ? "Saved" : `${kind === "brand" ? "Brand" : "Category"} added`, data: { id: res.data.id } };
 }
 
 export async function deleteTaxonomyAction(kind: "brand" | "category", id: string): Promise<ActionResult> {
