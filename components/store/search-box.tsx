@@ -19,7 +19,16 @@ interface Suggestion {
 // Small in-memory cache: repeated keystrokes never refetch the same query.
 const memo = new Map<string, Suggestion[]>();
 
-export function SearchBox({ initialQuery = "", className }: { initialQuery?: string; className?: string }) {
+export function SearchBox({
+  initialQuery = "",
+  className,
+  size = "md",
+}: {
+  initialQuery?: string;
+  className?: string;
+  size?: "md" | "lg";
+}) {
+  const large = size === "lg";
   const router = useRouter();
   const listId = useId();
   const [query, setQuery] = useState(initialQuery);
@@ -105,7 +114,7 @@ export function SearchBox({ initialQuery = "", className }: { initialQuery?: str
           type="search"
           autoComplete="off"
           enterKeyHint="search"
-          placeholder="Search iPhone 15, Samsung S25, Redmi Note…"
+          placeholder="Search iPhone 15, Samsung S25, Redmi, Realme…"
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -118,13 +127,16 @@ export function SearchBox({ initialQuery = "", className }: { initialQuery?: str
           aria-controls={`${listId}-list`}
           aria-autocomplete="list"
           aria-activedescendant={active >= 0 ? `${listId}-opt-${active}` : undefined}
-          className="h-11 w-full rounded-[var(--radius-control)] border border-line-strong bg-surface pl-10 pr-20 text-[15px] placeholder:text-ink-mute focus:border-signal focus:outline-none focus:ring-2 focus:ring-signal/20 [&::-webkit-search-cancel-button]:hidden"
+          className={cn(
+            "w-full rounded-[var(--radius-control)] border border-line-strong bg-surface pl-10 text-[15px] placeholder:text-ink-mute focus:border-signal focus:outline-none focus:ring-4 focus:ring-brand/20 [&::-webkit-search-cancel-button]:hidden",
+            large ? "h-12 bg-paper pr-28 focus:bg-surface" : "h-11 pr-20",
+          )}
         />
         {query ? (
           <button
             type="button"
             onClick={() => setQuery("")}
-            className="absolute right-[4.25rem] top-1/2 -translate-y-1/2 rounded p-1 text-ink-mute hover:text-ink"
+            className={cn("absolute top-1/2 -translate-y-1/2 rounded p-1 text-ink-mute hover:text-ink", large ? "right-[6.25rem]" : "right-[4.25rem]")}
             aria-label="Clear search"
           >
             <X className="h-4 w-4" />
@@ -132,7 +144,10 @@ export function SearchBox({ initialQuery = "", className }: { initialQuery?: str
         ) : null}
         <button
           type="submit"
-          className="absolute right-1 top-1 h-9 rounded-[8px] bg-ink px-3.5 text-sm font-semibold text-white hover:bg-ink/90"
+          className={cn(
+            "absolute right-1 top-1 rounded-[9px] bg-signal px-3.5 text-sm font-semibold text-white hover:bg-board",
+            large ? "h-10 px-6" : "h-9",
+          )}
         >
           Search
         </button>

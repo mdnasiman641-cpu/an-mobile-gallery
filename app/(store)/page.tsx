@@ -1,16 +1,33 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import Image from "next/image";
-import { BadgeCheck, Banknote, ShieldCheck, Truck } from "lucide-react";
-import { getBanners, getBrands, getCategories, getHomeSections, getRecentReviews } from "@/services/catalog";
+import {
+  getBanners,
+  getBrands,
+  getCategories,
+  getHomeSections,
+  getProductBySlug,
+  getPublishedPages,
+  getRecentReviews,
+  queryProducts,
+} from "@/services/catalog";
 import { getSeoSettings, getSiteSettings } from "@/services/settings";
-import { HomeHero } from "@/components/store/home-hero";
-import { ProductGrid } from "@/components/store/product-card";
+import { HomeHero, type HeroSpotlight } from "@/components/store/home-hero";
+import {
+  BrandStrip,
+  CategoryShowcase,
+  ExchangeAndEmi,
+  HomeSectionHeader,
+  ProductRail,
+  PromoBanners,
+  TrustStrip,
+  WhyUs,
+  type PromoLink,
+} from "@/components/store/home-sections";
 import { RatingStars } from "@/components/store/product-bits";
-import { SectionHeading } from "@/components/ui/misc";
 import { buildMetadata } from "@/lib/seo";
-import { isSvg, nowLabel, whatsappLink } from "@/lib/utils";
-import type { ProductCard } from "@/types";
+import { EMI_PROMO, EXCHANGE_PROMO } from "@/lib/storefront";
+import { nowLabel, whatsappLink } from "@/lib/utils";
+import type { Category, ProductCard } from "@/types";
 
 // Static page, refreshed at most every 10 minutes (and immediately when an
 // admin changes products, banners or settings).
@@ -27,18 +44,32 @@ export async function generateMetadata(): Promise<Metadata> {
   });
 }
 
-function Rail({ title, subtitle, href, products }: { title: string; subtitle?: string; href: string; products: ProductCard[] }) {
-  if (products.length === 0) return null;
-  return (
-    <section className="container-page mt-12" aria-label={title}>
-      <SectionHeading title={title} subtitle={subtitle} href={href} />
-      <ProductGrid products={products.slice(0, 10)} />
-    </section>
-  );
+function findAccessories(categories: Category[]): Category | undefined {
+  return categories.find((c) => c.slug === "accessories") ?? categories.find((c) => !c.parent_id && /accessor/i.test(c.name));
+}
+
+/** Link for a promo button: a published page (Admin → Pages), else WhatsApp, else the contact page. */
+function promoLink(
+  publishedSlugs: Set<string>,
+  pageSlugs: readonly string[],
+  pageLabel: string,
+  fallbackLabel: string,
+  whatsapp: string | null,
+  message: string,
+): PromoLink {
+  const page = pageSlugs.find((s) => publishedSlugs.has(s));
+  if (page) return { href: `/pages/${page}`, label: pageLabel, external: false };
+  const wa = whatsappLink(whatsapp, message);
+  if (wa) return { href: wa, label: fallbackLabel, external: true };
+  return { href: "/contact", label: fallbackLabel, external: false };
+}
+
+function dedupe(list: ProductCard[], skip: Set<string>): ProductCard[] {
+  return list.filter((p) => !skip.has(p.id));
 }
 
 export default async function HomePage() {
-  const [sections, heroBanners, promoBanners, categories, brands, reviews, settings] = await Promise.all([
+  const [sections, heroBanners, promoBanners, categories, brands, reviews, settings, pages] = await Promise.all([
     getHomeSections(),
     getBanners("hero"),
     getBanners("promo"),
@@ -46,11 +77,53 @@ export default async function HomePage() {
     getBrands(),
     getRecentReviews(6),
     getSiteSettings(),
+    getPublishedPages(),
   ]);
 
-  const featuredCategories = categories.filter((c) => c.is_featured).slice(0, 8);
-  const popularBrands = brands.filter((b) => b.is_featured).slice(0, 12);
-  const boardProducts = (sections.featured.length ? sections.featured : sections.latest).slice(0, 7);
+  // Hero spotlight: the top featured product with a photo (else the newest).
+  const spotlightCard =
+    sections.featured.find((p) => p.image_url) ?? sections.latest.find((p) => p.image_url) ?? sections.featured[0] ?? null;
+  const accessoriesCategory = findAccessories(categories);
+  const [spotlightDetail, accessories] = await Promise.all([
+    spotlightCard ? getProductBySlug(spotlightCard.slug) : Promise.resolve(null),
+    accessoriesCategory
+      ? queryProducts({ category: accessoriesCategory.slug, sort: "newest", perPage: 10 }).then((r) => r.items)
+      : Promise.resolve<ProductCard[]>([]),
+  ]);
+  const spotlight: HeroSpotlight | null = spotlightCard ? { card: spotlightCard, detail: spotlightDetail } : null;
+
+  // Deals board: discounted products; if there are none, today's featured prices.
+  const inHero = new Set(spotlightCard ? [spotlightCard.id] : []);
+  const offerDeals = dedupe(sections.offers, inHero).slice(0, 4);
+  const deals = offerDeals.length ? offerDeals : dedupe(sections.featured, inHero).slice(0, 4);
+
+  // Categories: featured first, then the rest, up to 6.
+  const showcase = [...categories.filter((c) => c.is_featured), ...categories.filter((c) => !c.is_featured)].slice(0, 6);
+  const popularBrands = (brands.some((b) => b.is_featured) ? brands.filter((b) => b.is_featured) : brands).slice(0, 12);
+
+  // Admin banners: the first hero banner leads the page only when no product can.
+  const heroBanner = spotlight ? null : (heroBanners[0] ?? null);
+  const promotions = [...heroBanners.filter((b) => b.id !== heroBanner?.id), ...promoBanners].slice(0, 3);
+
+  const publishedSlugs = new Set(pages.map((p) => p.slug));
+  const exchangeLink = promoLink(
+    publishedSlugs,
+    EXCHANGE_PROMO.pageSlugs,
+    EXCHANGE_PROMO.cta,
+    EXCHANGE_PROMO.cta,
+    settings.whatsapp,
+    EXCHANGE_PROMO.whatsappMessage,
+  );
+  const emiLink = promoLink(
+    publishedSlugs,
+    EMI_PROMO.pageSlugs,
+    EMI_PROMO.cta,
+    EMI_PROMO.fallbackCta,
+    settings.whatsapp,
+    EMI_PROMO.whatsappMessage,
+  );
+
+  const newArrivals = sections.newArrivals.length ? sections.newArrivals : sections.latest;
   const wa = whatsappLink(settings.whatsapp, `Hello ${settings.store_name}, I want to know the price of `);
 
   return (
@@ -60,121 +133,67 @@ export default async function HomePage() {
       </h1>
 
       <div className="container-page pt-4 lg:pt-6">
-        <HomeHero banners={heroBanners} boardProducts={boardProducts} updatedAt={nowLabel()} />
+        <HomeHero
+          spotlight={spotlight}
+          banner={heroBanner}
+          deals={deals}
+          dealsAreOffers={offerDeals.length > 0}
+          updatedAt={nowLabel()}
+          storeName={settings.store_name}
+          tagline={settings.tagline}
+          taglineBn={settings.tagline_bn}
+        />
       </div>
 
-      {featuredCategories.length ? (
-        <section className="container-page mt-10" aria-labelledby="home-categories">
-          <h2 id="home-categories" className="mb-4 text-xl font-bold md:text-2xl">
-            Shop by category
-          </h2>
-          <ul className="no-scrollbar -mx-4 flex gap-2.5 overflow-x-auto px-4 md:mx-0 md:grid md:grid-cols-4 md:px-0 lg:grid-cols-8">
-            {featuredCategories.map((c) => (
-              <li key={c.id} className="shrink-0">
-                <Link
-                  href={`/categories/${c.slug}`}
-                  className="flex h-full min-w-36 flex-col items-center gap-2 rounded-[var(--radius-card)] border border-line bg-surface px-3 py-4 text-center hover:border-ink"
-                >
-                  {c.image_url ? (
-                    <span className="relative h-14 w-14">
-                      <Image src={c.image_url} alt="" fill sizes="56px" className="object-contain" unoptimized={isSvg(c.image_url)} />
-                    </span>
-                  ) : (
-                    <span className="flex h-14 w-14 items-center justify-center rounded-full bg-signal-tint text-xl font-bold text-signal-dark" aria-hidden>
-                      {c.name.charAt(0)}
-                    </span>
-                  )}
-                  <span className="text-sm font-semibold text-ink">{c.name}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+      <TrustStrip emiMonths={EMI_PROMO.months} />
+      <CategoryShowcase categories={showcase} />
+      <ExchangeAndEmi exchange={exchangeLink} emi={emiLink} />
 
-      <Rail title="Featured phones" subtitle="Hand-picked by our team" href="/products?flag=featured" products={sections.featured} />
-
-      {popularBrands.length ? (
-        <section className="container-page mt-12" aria-labelledby="home-brands">
-          <SectionHeading id="home-brands" title="Popular brands" href="/brands" linkLabel="All brands" />
-          <ul className="grid grid-cols-3 gap-2.5 sm:grid-cols-4 lg:grid-cols-6">
-            {popularBrands.map((b) => (
-              <li key={b.id}>
-                <Link
-                  href={`/brands/${b.slug}`}
-                  className="flex h-16 items-center justify-center rounded-[var(--radius-card)] border border-line bg-surface px-3 hover:border-ink"
-                >
-                  {b.logo_url ? (
-                    <span className="relative h-8 w-24">
-                      <Image src={b.logo_url} alt={b.name} fill sizes="96px" className="object-contain" unoptimized={isSvg(b.logo_url)} />
-                    </span>
-                  ) : (
-                    <span className="text-[15px] font-bold tracking-tight text-ink">{b.name}</span>
-                  )}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      <Rail title="Special offers" subtitle="Discounted right now" href="/offers" products={sections.offers} />
-
-      {promoBanners.length ? (
-        <section className="container-page mt-12 grid gap-3 md:grid-cols-2" aria-label="Promotions">
-          {promoBanners.slice(0, 2).map((b) => (
-            <Link
-              key={b.id}
-              href={b.button_url || "/offers"}
-              className="relative flex min-h-36 overflow-hidden rounded-[var(--radius-card)] bg-ink"
-            >
-              <Image src={b.image_url} alt="" fill sizes="(min-width: 768px) 50vw, 100vw" className="object-cover opacity-70" unoptimized={isSvg(b.image_url)} />
-              <span className="relative flex flex-col justify-center p-6 text-white">
-                <span className="text-xl font-bold">{b.title}</span>
-                {b.subtitle ? <span className="mt-1 text-sm text-white/85">{b.subtitle}</span> : null}
-                {b.button_text ? <span className="mt-3 text-sm font-semibold underline">{b.button_text}</span> : null}
-              </span>
-            </Link>
-          ))}
-        </section>
-      ) : null}
-
-      <Rail title="Best sellers" subtitle="What customers buy most" href="/products?flag=best_seller" products={sections.bestSellers} />
-      <Rail
+      <ProductRail id="home-offers" title="Special offers" subtitle="Discounted right now" href="/offers" products={sections.offers} />
+      <BrandStrip brands={popularBrands} />
+      <ProductRail
+        id="home-featured"
+        title="Featured phones"
+        subtitle="Hand-picked by our team"
+        href="/products?flag=featured"
+        products={sections.featured}
+      />
+      <PromoBanners banners={promotions} />
+      <ProductRail
+        id="home-new"
+        title="New arrivals"
+        subtitle="Recently added to the shop"
+        href="/products?sort=newest"
+        products={newArrivals}
+      />
+      <ProductRail
+        id="home-used"
         title="Used & refurbished phones"
-        subtitle="Checked, with battery health and condition stated"
-        href="/categories/used-phones"
+        subtitle="Checked and tested, with the condition stated on every listing"
+        href="/products?flag=used"
         products={sections.used}
       />
-      <Rail title="New arrivals" href="/products?flag=new" products={sections.newArrivals} />
-      <Rail title="Latest products" href="/products?sort=newest" products={sections.latest} />
-
-      <section className="container-page mt-14" aria-labelledby="why-us">
-        <h2 id="why-us" className="text-xl font-bold md:text-2xl">
-          Why buy from {settings.store_name}
-        </h2>
-        <ul className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            { Icon: BadgeCheck, title: "Original products", text: "Every phone is checked before it leaves the shop." },
-            { Icon: Banknote, title: "The price you see is the price", text: "Prices in Taka with no hidden charges at checkout." },
-            { Icon: Truck, title: "Cash on delivery", text: "Pay when the phone reaches you, anywhere in Bangladesh." },
-            { Icon: ShieldCheck, title: "Warranty in writing", text: "Warranty terms are shown on every product page." },
-          ].map(({ Icon, title, text }) => (
-            <li key={title} className="rounded-[var(--radius-card)] border border-line bg-surface p-5">
-              <Icon className="h-6 w-6 text-signal" aria-hidden />
-              <p className="mt-3 font-semibold text-ink">{title}</p>
-              <p className="mt-1 text-sm text-ink-soft">{text}</p>
-            </li>
-          ))}
-        </ul>
-      </section>
+      {accessoriesCategory ? (
+        <ProductRail
+          id="home-accessories"
+          title={accessoriesCategory.name}
+          subtitle={accessoriesCategory.description ?? undefined}
+          href={`/categories/${accessoriesCategory.slug}`}
+          products={accessories}
+        />
+      ) : null}
+      <ProductRail
+        id="home-best"
+        title="Best sellers"
+        subtitle="What customers buy most"
+        href="/products?flag=best_seller"
+        products={sections.bestSellers}
+      />
 
       {reviews.length ? (
         <section className="container-page mt-14" aria-labelledby="home-reviews">
-          <h2 id="home-reviews" className="text-xl font-bold md:text-2xl">
-            What customers say
-          </h2>
-          <ul className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+          <HomeSectionHeader id="home-reviews" title="What customers say" />
+          <ul className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
             {reviews.map((r) => (
               <li key={r.id} className="flex flex-col rounded-[var(--radius-card)] border border-line bg-surface p-5">
                 <RatingStars value={r.rating} />
@@ -198,11 +217,13 @@ export default async function HomePage() {
         </section>
       ) : null}
 
-      <section className="container-page mt-14">
-        <div className="flex flex-col items-start gap-4 rounded-[var(--radius-card)] bg-signal p-6 text-white sm:p-8 md:flex-row md:items-center md:justify-between">
+      <WhyUs storeName={settings.store_name} phone={settings.phone} emiMonths={EMI_PROMO.months} />
+
+      <section className="container-page mt-6">
+        <div className="flex flex-col items-start gap-5 rounded-[24px] bg-board p-6 text-white sm:p-8 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-xl font-bold sm:text-2xl">Can&rsquo;t find the phone you want?</p>
-            <p className="bn mt-1 text-white/85">আপনার পছন্দের ফোনটি খুঁজে না পেলে আমাদের জানান</p>
+            <p className="text-xl font-bold tracking-[-0.02em] sm:text-2xl">Can&rsquo;t find the phone you want?</p>
+            <p className="bn mt-1 text-white/80">আপনার পছন্দের ফোনটি খুঁজে না পেলে আমাদের জানান</p>
           </div>
           <div className="flex flex-wrap gap-2">
             {wa ? (
@@ -210,14 +231,14 @@ export default async function HomePage() {
                 href={wa}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex h-11 items-center rounded-[var(--radius-control)] bg-white px-5 font-semibold text-ink"
+                className="inline-flex h-11 items-center rounded-full bg-white px-6 font-semibold text-board hover:bg-gold"
               >
                 Ask on WhatsApp
               </a>
             ) : null}
             <Link
               href="/contact"
-              className="inline-flex h-11 items-center rounded-[var(--radius-control)] border border-white/40 px-5 font-semibold text-white hover:border-white"
+              className="inline-flex h-11 items-center rounded-full border border-white/40 px-6 font-semibold text-white hover:border-white"
             >
               Contact the shop
             </Link>
