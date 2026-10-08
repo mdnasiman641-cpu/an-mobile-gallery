@@ -11,7 +11,10 @@ export function CartLink({ className }: { className?: string }) {
   return (
     <Link
       href="/cart"
-      className={cn("relative inline-flex h-10 items-center gap-2 rounded-[var(--radius-control)] px-2.5 hover:bg-ink/5", className)}
+      className={cn(
+        "relative inline-flex h-10 items-center gap-2 rounded-[var(--radius-control)] px-2.5 text-ink hover:bg-signal-tint lg:h-11 lg:bg-signal-tint lg:px-3.5 lg:text-signal lg:hover:bg-signal lg:hover:text-white",
+        className,
+      )}
       aria-label={ready && count > 0 ? `Cart, ${count} item${count === 1 ? "" : "s"}` : "Cart"}
     >
       <ShoppingBag className="h-[22px] w-[22px]" aria-hidden />
@@ -30,12 +33,12 @@ export function CompareLink() {
   return (
     <Link
       href="/compare"
-      className="relative hidden h-10 items-center gap-2 rounded-[var(--radius-control)] px-2.5 hover:bg-ink/5 md:inline-flex"
+      className="relative hidden h-10 items-center gap-2 rounded-[var(--radius-control)] px-2.5 text-ink hover:bg-paper hover:text-signal md:inline-flex lg:h-11"
     >
       <GitCompareArrows className="h-5 w-5" aria-hidden />
       <span className="hidden text-sm font-semibold lg:inline">Compare</span>
       {ready && compare.length > 0 ? (
-        <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-ink px-1 text-[11px] font-bold text-white">
+        <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-signal px-1 text-[11px] font-bold text-white">
           {compare.length}
         </span>
       ) : null}
@@ -47,7 +50,7 @@ export function AccountLink() {
   return (
     <Link
       href="/account"
-      className="hidden h-10 items-center gap-2 rounded-[var(--radius-control)] px-2.5 hover:bg-ink/5 md:inline-flex"
+      className="hidden h-10 items-center gap-2 rounded-[var(--radius-control)] px-2.5 text-ink hover:bg-paper hover:text-signal md:inline-flex lg:h-11"
     >
       <User className="h-5 w-5" aria-hidden />
       <span className="hidden text-sm font-semibold lg:inline">Account</span>
@@ -114,7 +117,7 @@ export function MobileMenu({
           />
           <nav onClick={closeOnLink} className="absolute inset-y-0 left-0 flex w-[86%] max-w-sm flex-col overflow-y-auto bg-surface shadow-xl">
             <div className="flex items-center justify-between border-b border-line px-4 py-3">
-              <span className="font-bold text-ink">{storeName}</span>
+              <span className="font-extrabold tracking-tight text-ink">{storeName}</span>
               <button
                 type="button"
                 onClick={() => setOpen(false)}
@@ -173,7 +176,7 @@ export function MobileMenu({
 
             {phone ? (
               <div className="mt-auto border-t border-line p-4">
-                <a href={`tel:${phone}`} className="block rounded-lg bg-signal-tint px-4 py-3 text-center font-semibold text-signal-dark">
+                <a href={`tel:${phone}`} className="block rounded-lg bg-signal px-4 py-3 text-center font-semibold text-white">
                   Call {phone}
                 </a>
               </div>

@@ -2,36 +2,45 @@
 
 /*
   AN MOBILE GALLERY — design tokens
-  Paper   #F5F7F8  cool off-white page
-  Ink     #17212B  graphite text
-  Signal  #0E7C66  deep green: primary actions, trust
-  Taka    #C98A0B  price accent (darkened gold for AA contrast on white)
-  Deal    #C2264B  discount / sale badges
-  Line    #E1E6EA  hairlines and borders
+  Paper   #F8FAFC  cool off-white page
+  Ink     #111827  navy-black text
+  Brand   #0F9D7A  brand green: logo mark, accents, icons, gradients
+  Signal  #0B7A60  the same green, deepened for text and for buttons
+                   with white text (5.3:1; #0F9D7A is only 3.4:1)
+  Board   #073B30  deep green "price board" surfaces
+  Deal    #E11D48  discount / offer badges
+  Line    #E2E8F0  hairlines and borders
 */
 @theme {
-  --color-paper: #f5f7f8;
+  --color-paper: #f8fafc;
   --color-surface: #ffffff;
-  --color-ink: #17212b;
-  --color-ink-soft: #4a5866;
-  --color-ink-mute: #6b7884;
-  --color-line: #e1e6ea;
-  --color-line-strong: #c9d1d8;
-  --color-signal: #0e7c66;
-  --color-signal-dark: #0a5f4e;
-  --color-signal-tint: #e3f2ee;
+  --color-ink: #111827;
+  --color-ink-soft: #334155;
+  --color-ink-mute: #64748b;
+  --color-line: #e2e8f0;
+  --color-line-strong: #cbd5e1;
+  --color-brand: #0f9d7a;
+  --color-signal: #0b7a60;
+  --color-signal-dark: #08624d;
+  --color-signal-tint: #e7f6f1;
+  --color-board: #073b30;
+  --color-board-soft: #0c4a3d;
+  --color-gold: #fde68a;
   --color-taka: #a8730a;
   --color-taka-tint: #fbf1dc;
-  --color-deal: #c2264b;
-  --color-deal-tint: #fbe7ec;
+  --color-deal: #e11d48;
+  --color-deal-tint: #ffe4ea;
   --color-warn: #b45309;
   --color-warn-tint: #fef3e2;
 
   --font-sans: var(--font-onest), var(--font-hind), ui-sans-serif, system-ui, sans-serif;
   --font-bangla: var(--font-hind), var(--font-onest), ui-sans-serif, sans-serif;
 
-  --radius-card: 14px;
-  --radius-control: 10px;
+  --shadow-soft: 0 1px 2px rgb(17 24 39 / 0.04), 0 8px 24px -12px rgb(17 24 39 / 0.12);
+  --shadow-lift: 0 2px 4px rgb(17 24 39 / 0.05), 0 18px 40px -18px rgb(11 122 96 / 0.35);
+
+  --radius-card: 16px;
+  --radius-control: 12px;
 }
 
 @layer base {
@@ -110,6 +119,19 @@
     color: var(--color-signal);
     text-decoration: underline;
   }
+  /* Section headings on the home page */
+  .section-title {
+    font-size: 1.375rem;
+    line-height: 1.2;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--color-ink);
+  }
+  @media (min-width: 768px) {
+    .section-title {
+      font-size: 1.75rem;
+    }
+  }
   .no-scrollbar {
     scrollbar-width: none;
   }
@@ -117,7 +139,7 @@
     display: none;
   }
   .skeleton {
-    background: linear-gradient(90deg, #eceff2 25%, #f5f7f8 50%, #eceff2 75%);
+    background: linear-gradient(90deg, #eef2f6 25%, #f8fafc 50%, #eef2f6 75%);
     background-size: 200% 100%;
     animation: shimmer 1.4s infinite linear;
   }
