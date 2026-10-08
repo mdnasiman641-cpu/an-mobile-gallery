@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 700" width="1600" height="700" preserveAspectRatio="xMidYMid slice">
+<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#17212b"/><stop offset="1" stop-color="#2e4052"/></linearGradient></defs>
+<rect width="1600" height="700" fill="url(#g)"/>
+<circle cx="1280" cy="350" r="300" fill="#ffffff" opacity=".06"/><circle cx="1280" cy="350" r="200" fill="#ffffff" opacity=".06"/>
+<g transform="translate(1140 140) rotate(-10 120 220)"><rect width="220" height="440" rx="38" fill="#ffffff" opacity=".18"/><rect x="10" y="10" width="200" height="420" rx="30" fill="#0b1117" opacity=".55"/></g>
+<g transform="translate(1290 180) rotate(8 110 200)"><rect width="200" height="400" rx="36" fill="#ffffff" opacity=".28"/></g>
+<text x="1560" y="680" text-anchor="end" font-family="Arial, sans-serif" font-size="20" fill="#ffffff" opacity=".5">Demo banner</text>
+</svg>

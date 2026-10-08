@@ -1,0 +1,143 @@
+@import "tailwindcss";
+
+/*
+  AN MOBILE GALLERY — design tokens
+  Paper   #F5F7F8  cool off-white page
+  Ink     #17212B  graphite text
+  Signal  #0E7C66  deep green: primary actions, trust
+  Taka    #C98A0B  price accent (darkened gold for AA contrast on white)
+  Deal    #C2264B  discount / sale badges
+  Line    #E1E6EA  hairlines and borders
+*/
+@theme {
+  --color-paper: #f5f7f8;
+  --color-surface: #ffffff;
+  --color-ink: #17212b;
+  --color-ink-soft: #4a5866;
+  --color-ink-mute: #6b7884;
+  --color-line: #e1e6ea;
+  --color-line-strong: #c9d1d8;
+  --color-signal: #0e7c66;
+  --color-signal-dark: #0a5f4e;
+  --color-signal-tint: #e3f2ee;
+  --color-taka: #a8730a;
+  --color-taka-tint: #fbf1dc;
+  --color-deal: #c2264b;
+  --color-deal-tint: #fbe7ec;
+  --color-warn: #b45309;
+  --color-warn-tint: #fef3e2;
+
+  --font-sans: var(--font-onest), var(--font-hind), ui-sans-serif, system-ui, sans-serif;
+  --font-bangla: var(--font-hind), var(--font-onest), ui-sans-serif, sans-serif;
+
+  --radius-card: 14px;
+  --radius-control: 10px;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+    overflow-x: hidden;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-signal);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+  }
+  ::selection {
+    background: var(--color-signal-tint);
+  }
+}
+
+@layer components {
+  .container-page {
+    width: 100%;
+    max-width: 1320px;
+    margin-inline: auto;
+    padding-inline: 16px;
+  }
+  @media (min-width: 768px) {
+    .container-page {
+      padding-inline: 24px;
+    }
+  }
+  .price {
+    font-variant-numeric: tabular-nums lining-nums;
+    letter-spacing: -0.01em;
+  }
+  .bn {
+    font-family: var(--font-bangla);
+  }
+  .prose-store {
+    line-height: 1.7;
+    max-width: 75ch;
+  }
+  .prose-store p {
+    margin-block: 0.75em;
+  }
+  .prose-store h2 {
+    font-size: 1.25rem;
+    font-weight: 650;
+    margin-top: 1.5em;
+  }
+  .prose-store h3 {
+    font-size: 1.05rem;
+    font-weight: 650;
+    margin-top: 1.25em;
+  }
+  .prose-store ul {
+    list-style: disc;
+    padding-left: 1.25em;
+  }
+  .prose-store ol {
+    list-style: decimal;
+    padding-left: 1.25em;
+  }
+  .prose-store a {
+    color: var(--color-signal);
+    text-decoration: underline;
+  }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .skeleton {
+    background: linear-gradient(90deg, #eceff2 25%, #f5f7f8 50%, #eceff2 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s infinite linear;
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

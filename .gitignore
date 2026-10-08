@@ -1,0 +1,27 @@
+# dependencies & build output
+node_modules
+.next
+out
+build
+*.tsbuildinfo
+next-env.d.ts
+
+# Cloudflare / OpenNext
+.open-next
+.wrangler
+.dev.vars
+.dev.vars.*
+
+# other hosts
+.vercel
+
+# Environment files: never commit real values (only .env.example)
+.env
+.env.*
+!.env.example
+
+# misc
+.DS_Store
+npm-debug.log*
+supabase/.temp
+supabase/.branches

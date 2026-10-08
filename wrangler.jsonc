@@ -1,0 +1,59 @@
+// Cloudflare Workers configuration for AN MOBILE GALLERY (Next.js via OpenNext).
+// Everything here is non-secret and safe to commit.
+// Secrets (SUPABASE_SERVICE_ROLE_KEY) are added with `npx wrangler secret put`
+// or in the dashboard, never in this file.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "an-mobile-gallery",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+
+  // Static files (/_next/static, /public). Served directly, no Worker CPU used.
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+
+  // Must match "name" above. Used by OpenNext for cache revalidation.
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "an-mobile-gallery"
+    }
+  ],
+
+  // ISR / unstable_cache storage. Create once:
+  //   npx wrangler r2 bucket create an-mobile-gallery-cache
+  "r2_buckets": [
+    {
+      "binding": "NEXT_INC_CACHE_R2_BUCKET",
+      "bucket_name": "an-mobile-gallery-cache"
+    }
+  ],
+
+  // Time-based revalidation queue + on-demand revalidation (revalidateTag /
+  // revalidatePath) tag cache. SQLite-backed Durable Objects work on Workers Free.
+  "durable_objects": {
+    "bindings": [
+      { "name": "NEXT_CACHE_DO_QUEUE", "class_name": "DOQueueHandler" },
+      { "name": "NEXT_TAG_CACHE_DO_SHARDED", "class_name": "DOShardedTagCache" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["DOQueueHandler", "DOShardedTagCache"]
+    }
+  ],
+
+  // next/image optimisation through Cloudflare Images
+  // (Free plan: 5,000 unique transformations per month).
+  "images": {
+    "binding": "IMAGES"
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}
