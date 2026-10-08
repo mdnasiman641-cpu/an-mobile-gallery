@@ -10,9 +10,9 @@ export interface HeroSpotlight {
   detail: ProductDetail | null;
 }
 
-function Spotlight({ spotlight }: { spotlight: HeroSpotlight }) {
+function Spotlight({ spotlight, imageOverride }: { spotlight: HeroSpotlight; imageOverride: string | null }) {
   const { card, detail } = spotlight;
-  const image = detail?.images[0]?.url ?? card.image_url;
+  const image = imageOverride ?? detail?.images[0]?.url ?? card.image_url;
   const imageAlt = detail?.images[0]?.alt_text || card.image_alt || card.name;
   const final = effectivePrice(card.price, card.sale_price);
   const off = discountPercent(card.price, card.sale_price);
@@ -166,21 +166,35 @@ function BrandHero({ storeName, tagline, taglineBn }: { storeName: string; tagli
 }
 
 /** "Today's best deals" — styled after the price boards on phone-shop walls. */
-function DealsBoard({ products, updatedAt, offers }: { products: ProductCard[]; updatedAt: string; offers: boolean }) {
+export function DealsBoard({
+  products,
+  updatedAt,
+  offers,
+  title,
+  subtitle,
+  wide = false,
+}: {
+  products: ProductCard[];
+  updatedAt: string;
+  offers: boolean;
+  title?: string | null;
+  subtitle?: string | null;
+  wide?: boolean;
+}) {
   return (
     <section aria-labelledby="deals-title" className="flex h-full flex-col rounded-[24px] bg-board p-5 text-white sm:p-6">
       <div className="flex items-start gap-2.5">
         <Flame className="mt-0.5 h-6 w-6 shrink-0 text-[#fbbf24]" aria-hidden />
         <div>
           <h2 id="deals-title" className="text-xl font-bold tracking-[-0.02em]">
-            {offers ? <>Today&rsquo;s best deals</> : <>Today&rsquo;s prices</>}
+            {title ?? (offers ? <>Today&rsquo;s best deals</> : <>Today&rsquo;s prices</>)}
           </h2>
-          <p className="bn text-sm text-white/70">{offers ? "আজকের সেরা অফার" : "আজকের দাম"}</p>
+          <p className="bn text-sm text-white/70">{subtitle ?? (offers ? "আজকের সেরা অফার" : "আজকের দাম")}</p>
           <p className="mt-0.5 text-xs text-white/50">Prices updated {updatedAt}</p>
         </div>
       </div>
 
-      <ul className="mt-4 flex-1 divide-y divide-dashed divide-white/15">
+      <ul className={wide ? "mt-4 grid flex-1 gap-x-8 md:grid-cols-2 [&>li]:border-b [&>li]:border-dashed [&>li]:border-white/15" : "mt-4 flex-1 divide-y divide-dashed divide-white/15"}>
         {products.map((p) => {
           const final = effectivePrice(p.price, p.sale_price);
           const off = discountPercent(p.price, p.sale_price);
@@ -226,6 +240,9 @@ export function HomeHero({
   banner,
   deals,
   dealsAreOffers,
+  dealsTitle = null,
+  dealsSubtitle = null,
+  imageOverride = null,
   updatedAt,
   storeName,
   tagline,
@@ -235,13 +252,16 @@ export function HomeHero({
   banner: Banner | null;
   deals: ProductCard[];
   dealsAreOffers: boolean;
+  dealsTitle?: string | null;
+  dealsSubtitle?: string | null;
+  imageOverride?: string | null;
   updatedAt: string;
   storeName: string;
   tagline: string | null;
   taglineBn: string | null;
 }) {
   const main = spotlight ? (
-    <Spotlight spotlight={spotlight} />
+    <Spotlight spotlight={spotlight} imageOverride={imageOverride} />
   ) : banner ? (
     <BannerHero banner={banner} />
   ) : (
@@ -252,7 +272,7 @@ export function HomeHero({
   return (
     <div className="grid gap-3 lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)] lg:gap-4">
       {main}
-      <DealsBoard products={deals} updatedAt={updatedAt} offers={dealsAreOffers} />
+      <DealsBoard products={deals} updatedAt={updatedAt} offers={dealsAreOffers} title={dealsTitle} subtitle={dealsSubtitle} />
     </div>
   );
 }

@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import type { Banner, Brand, Category, ProductCard } from "@/types";
 import { ProductGrid } from "@/components/store/product-card";
-import { EMI_PROMO, EXCHANGE_PROMO, STORE_AREA } from "@/lib/storefront";
+import type { TextItem } from "@/lib/homepage";
 import { cn, isSvg } from "@/lib/utils";
 
 export function HomeSectionHeader({
@@ -64,6 +64,7 @@ export function ProductRail({
   href,
   products,
   note,
+  linkLabel,
 }: {
   id: string;
   title: string;
@@ -71,28 +72,26 @@ export function ProductRail({
   href: string;
   products: ProductCard[];
   note?: React.ReactNode;
+  linkLabel?: string;
 }) {
   if (products.length === 0) return null;
   return (
     <section className="container-page mt-14" aria-labelledby={id}>
-      <HomeSectionHeader id={id} title={title} subtitle={subtitle} href={href} />
+      <HomeSectionHeader id={id} title={title} subtitle={subtitle} href={href} linkLabel={linkLabel} />
       {note}
       <ProductGrid products={products.slice(0, 10)} rails />
     </section>
   );
 }
 
-export function TrustStrip({ emiMonths }: { emiMonths: string }) {
-  const items = [
-    { Icon: ShieldCheck, title: "Original products", text: "Checked before sale" },
-    { Icon: CreditCard, title: "EMI installment", text: emiMonths },
-    { Icon: RefreshCcw, title: "Buy | Sell | Exchange", text: "Old phone to new" },
-    { Icon: Truck, title: "Fast delivery", text: "Across Bangladesh" },
-    { Icon: Store, title: "Trusted shop", text: STORE_AREA },
-  ];
+const TRUST_ICONS = [ShieldCheck, CreditCard, RefreshCcw, Truck, Store];
+
+export function TrustStrip({ items: textItems }: { items: TextItem[] }) {
+  const items = textItems.slice(0, 5).map((t, i) => ({ Icon: TRUST_ICONS[i % TRUST_ICONS.length], title: t.title, text: t.text }));
+  if (items.length === 0) return null;
   return (
     <section aria-label="Our services" className="container-page mt-4">
-      <ul className="no-scrollbar -mx-4 flex gap-2.5 overflow-x-auto px-4 md:mx-0 md:grid md:grid-cols-5 md:gap-3 md:px-0">
+      <ul className={cn("no-scrollbar -mx-4 flex gap-2.5 overflow-x-auto px-4 md:mx-0 md:grid md:gap-3 md:px-0", ["", "md:grid-cols-1", "md:grid-cols-2", "md:grid-cols-3", "md:grid-cols-4", "md:grid-cols-5"][items.length])}>
         {items.map(({ Icon, title, text }) => (
           <li
             key={title}
@@ -124,11 +123,21 @@ function categoryIcon(c: Category) {
   return LayoutGrid;
 }
 
-export function CategoryShowcase({ categories }: { categories: Category[] }) {
+export function CategoryShowcase({
+  categories,
+  title,
+  href = "/categories",
+  linkLabel = "All categories",
+}: {
+  categories: Category[];
+  title: string;
+  href?: string;
+  linkLabel?: string;
+}) {
   if (categories.length === 0) return null;
   return (
     <section className="container-page mt-14" aria-labelledby="home-categories">
-      <HomeSectionHeader id="home-categories" title="Shop by category" href="/categories" linkLabel="All categories" />
+      <HomeSectionHeader id="home-categories" title={title} href={href} linkLabel={linkLabel} />
       <ul className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1 md:mx-0 md:grid md:grid-cols-3 md:px-0 lg:grid-cols-6">
         {categories.map((c) => {
           const Icon = categoryIcon(c);
@@ -185,40 +194,72 @@ function PromoButton({ link, tone }: { link: PromoLink; tone: "solid" | "outline
   );
 }
 
-export function ExchangeAndEmi({ exchange, emi }: { exchange: PromoLink; emi: PromoLink }) {
-  return (
-    <section aria-label="Exchange and EMI" className="container-page mt-14 grid gap-3 md:grid-cols-2 md:gap-4">
-      <div className="relative overflow-hidden rounded-[24px] bg-[linear-gradient(135deg,#e3f5ee_0%,#f4fbf8_60%,#ffffff_100%)] p-6 ring-1 ring-brand/20 sm:p-8">
-        <RefreshCcw aria-hidden className="absolute -right-6 -top-6 h-40 w-40 text-brand/10" strokeWidth={1.2} />
-        <h2 className="bn relative max-w-sm text-[1.75rem] font-semibold leading-[1.25] text-board sm:text-[2rem]">{EXCHANGE_PROMO.titleBn}</h2>
-        <p className="relative mt-2 font-semibold text-signal">{EXCHANGE_PROMO.subtitle}</p>
-        <p className="relative mt-2 max-w-sm text-[15px] text-ink-soft">{EXCHANGE_PROMO.text}</p>
-        <PromoButton link={exchange} tone="solid" />
-      </div>
+export interface ExchangeContent {
+  title: string;
+  subtitle: string | null;
+  description: string | null;
+  link: PromoLink;
+}
+export interface EmiContent {
+  title: string;
+  subtitle: string | null;
+  points: string[];
+  link: PromoLink;
+}
 
-      <div className="relative overflow-hidden rounded-[24px] border border-line bg-surface p-6 sm:p-8">
-        <CalendarCheck aria-hidden className="absolute -right-5 -top-5 h-36 w-36 text-brand/10" strokeWidth={1.2} />
-        <h2 className="relative text-[1.6rem] font-extrabold tracking-[-0.03em] text-ink sm:text-[1.9rem]">{EMI_PROMO.title}</h2>
-        <p className="relative mt-1 inline-flex rounded-full bg-signal-tint px-3 py-1 text-sm font-semibold text-signal">{EMI_PROMO.months}</p>
-        <ul className="relative mt-4 space-y-2">
-          {EMI_PROMO.points.map((p) => (
-            <li key={p} className="flex items-center gap-2 text-[15px] text-ink">
-              <CircleCheck className="h-[18px] w-[18px] shrink-0 text-brand" aria-hidden />
-              {p}
-            </li>
-          ))}
-        </ul>
-        <PromoButton link={emi} tone="outline" />
-      </div>
+export function ExchangeAndEmi({ exchange, emi }: { exchange: ExchangeContent | null; emi: EmiContent | null }) {
+  if (!exchange && !emi) return null;
+  return (
+    <section aria-label="Exchange and EMI" className={cn("container-page mt-14 grid gap-3 md:gap-4", exchange && emi && "md:grid-cols-2")}>
+      {exchange ? (
+        <div className="relative overflow-hidden rounded-[24px] bg-[linear-gradient(135deg,#e3f5ee_0%,#f4fbf8_60%,#ffffff_100%)] p-6 ring-1 ring-brand/20 sm:p-8">
+          <RefreshCcw aria-hidden className="absolute -right-6 -top-6 h-40 w-40 text-brand/10" strokeWidth={1.2} />
+          <h2 className="bn relative max-w-sm text-[1.75rem] font-semibold leading-[1.25] text-board sm:text-[2rem]">{exchange.title}</h2>
+          {exchange.subtitle ? <p className="relative mt-2 font-semibold text-signal">{exchange.subtitle}</p> : null}
+          {exchange.description ? <p className="relative mt-2 max-w-sm text-[15px] text-ink-soft">{exchange.description}</p> : null}
+          <PromoButton link={exchange.link} tone="solid" />
+        </div>
+      ) : null}
+
+      {emi ? (
+        <div className="relative overflow-hidden rounded-[24px] border border-line bg-surface p-6 sm:p-8">
+          <CalendarCheck aria-hidden className="absolute -right-5 -top-5 h-36 w-36 text-brand/10" strokeWidth={1.2} />
+          <h2 className="relative text-[1.6rem] font-extrabold tracking-[-0.03em] text-ink sm:text-[1.9rem]">{emi.title}</h2>
+          {emi.subtitle ? (
+            <p className="relative mt-1 inline-flex rounded-full bg-signal-tint px-3 py-1 text-sm font-semibold text-signal">{emi.subtitle}</p>
+          ) : null}
+          {emi.points.length ? (
+            <ul className="relative mt-4 space-y-2">
+              {emi.points.map((p) => (
+                <li key={p} className="flex items-center gap-2 text-[15px] text-ink">
+                  <CircleCheck className="h-[18px] w-[18px] shrink-0 text-brand" aria-hidden />
+                  {p}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <PromoButton link={emi.link} tone="outline" />
+        </div>
+      ) : null}
     </section>
   );
 }
 
-export function BrandStrip({ brands }: { brands: Brand[] }) {
+export function BrandStrip({
+  brands,
+  title,
+  href = "/brands",
+  linkLabel = "All brands",
+}: {
+  brands: Brand[];
+  title: string;
+  href?: string;
+  linkLabel?: string;
+}) {
   if (brands.length === 0) return null;
   return (
     <section className="container-page mt-14" aria-labelledby="home-brands">
-      <HomeSectionHeader id="home-brands" title="Popular brands" href="/brands" linkLabel="All brands" />
+      <HomeSectionHeader id="home-brands" title={title} href={href} linkLabel={linkLabel} />
       <ul className="no-scrollbar -mx-4 flex gap-2.5 overflow-x-auto px-4 md:mx-0 md:grid md:grid-cols-4 md:gap-3 md:px-0 lg:grid-cols-6">
         {brands.map((b) => (
           <li key={b.id} className="shrink-0">
@@ -281,35 +322,80 @@ export function PromoBanners({ banners }: { banners: Banner[] }) {
   );
 }
 
-export function WhyUs({ storeName, phone, emiMonths }: { storeName: string; phone: string | null; emiMonths: string }) {
-  const items = [
-    { Icon: ShieldCheck, title: "100% genuine products", text: "Every phone is checked before it leaves the shop." },
-    { Icon: LockKeyhole, title: "Secure shopping", text: "Pay cash on delivery. Prices are confirmed again at checkout." },
-    { Icon: CreditCard, title: "Easy EMI plans", text: `Pay over ${emiMonths}.` },
-    {
-      Icon: Headphones,
-      title: "Customer support",
-      text: phone ? `Call or WhatsApp ${phone} for help before and after you buy.` : "Help before and after you buy.",
-    },
-    { Icon: RefreshCcw, title: "Buy | Sell | Exchange", text: "Sell your old phone or trade it in for a new one." },
-  ];
+const WHY_ICONS = [ShieldCheck, LockKeyhole, CreditCard, Headphones, RefreshCcw];
+
+export function WhyUs({ title, items }: { title: string; items: TextItem[] }) {
+  const list = items.slice(0, 5);
+  if (list.length === 0) return null;
   return (
     <section className="container-page mt-16" aria-labelledby="why-us">
       <div className="rounded-[24px] border border-line bg-surface p-6 sm:p-8">
         <h2 id="why-us" className="section-title">
-          Why {storeName}
+          {title}
         </h2>
-        <ul className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-5 lg:gap-0 lg:divide-x lg:divide-line">
-          {items.map(({ Icon, title, text }) => (
-            <li key={title} className="lg:px-5 lg:first:pl-0 lg:last:pr-0">
-              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-signal-tint text-signal">
-                <Icon className="h-5 w-5" aria-hidden />
-              </span>
-              <p className="mt-3 font-semibold text-ink">{title}</p>
-              <p className="mt-1 text-sm leading-relaxed text-ink-mute">{text}</p>
-            </li>
-          ))}
+        <ul
+          className={cn(
+            "mt-6 grid gap-6 sm:grid-cols-2 lg:gap-0 lg:divide-x lg:divide-line",
+            ["", "lg:grid-cols-1", "lg:grid-cols-2", "lg:grid-cols-3", "lg:grid-cols-4", "lg:grid-cols-5"][list.length],
+          )}
+        >
+          {list.map(({ title: t, text }, i) => {
+            const Icon = WHY_ICONS[i % WHY_ICONS.length];
+            return (
+              <li key={`${t}-${i}`} className="lg:px-5 lg:first:pl-0 lg:last:pr-0">
+                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-signal-tint text-signal">
+                  <Icon className="h-5 w-5" aria-hidden />
+                </span>
+                <p className="mt-3 font-semibold text-ink">{t}</p>
+                {text ? <p className="mt-1 text-sm leading-relaxed text-ink-mute">{text}</p> : null}
+              </li>
+            );
+          })}
         </ul>
+      </div>
+    </section>
+  );
+}
+
+/** Dark band above the footer. */
+export function FooterPromo({
+  title,
+  subtitle,
+  whatsappHref,
+  buttonText,
+  buttonUrl,
+}: {
+  title: string;
+  subtitle: string | null;
+  whatsappHref: string | null;
+  buttonText: string;
+  buttonUrl: string;
+}) {
+  return (
+    <section className="container-page mt-6">
+      <div className="flex flex-col items-start gap-5 rounded-[24px] bg-board p-6 text-white sm:p-8 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-xl font-bold tracking-[-0.02em] sm:text-2xl">{title}</p>
+          {subtitle ? <p className="bn mt-1 text-white/80">{subtitle}</p> : null}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {whatsappHref ? (
+            <a
+              href={whatsappHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-11 items-center rounded-full bg-white px-6 font-semibold text-board hover:bg-gold"
+            >
+              Ask on WhatsApp
+            </a>
+          ) : null}
+          <Link
+            href={buttonUrl}
+            className="inline-flex h-11 items-center rounded-full border border-white/40 px-6 font-semibold text-white hover:border-white"
+          >
+            {buttonText}
+          </Link>
+        </div>
       </div>
     </section>
   );
