@@ -5,7 +5,8 @@ import { AdminPageHeader } from "@/components/admin/page-header";
 import { HomepageManager, type PickerOption } from "@/components/admin/homepage-manager";
 import { DEFAULT_SECTIONS, mergeSections, type HomepageSection, type SectionKey } from "@/lib/homepage";
 import { sectionFromRow } from "@/services/homepage";
-import { ButtonLink } from "@/components/ui/button";
+import Link from "next/link";
+import { buttonClasses } from "@/components/ui/button";
 
 export const metadata: Metadata = { title: "Homepage Management" };
 
@@ -52,9 +53,9 @@ export default async function HomepageManagementPage() {
         title="Homepage Management"
         description="Choose which sections appear, their order, their text, and which products, categories, brands or banners they show."
         actions={
-          <ButtonLink href="/" variant="outline" size="sm" target="_blank">
+          <Link href="/" target="_blank" rel="noopener noreferrer" className={buttonClasses("outline", "sm")}>
             View homepage
-          </ButtonLink>
+          </Link>
         }
       />
       {migrationMissing ? (
