@@ -244,7 +244,9 @@ export async function runWithFailover(req: AiRequest, deps: RouterDeps): Promise
     if (!deps.onlyModelId) {
       const cool = h.cooldownUntil ? Date.parse(h.cooldownUntil) : 0;
       if (cool > t) {
-        skip("COOLDOWN", `${h.status.toLowerCase().replace("_", " ")}, available again ${new Date(cool).toISOString()}`);
+        // Say WHY it is cooling down (the last real provider error), not just that it is.
+        const why = h.lastErrorCode ? `${h.lastErrorCode}${h.lastErrorMessage ? `: ${h.lastErrorMessage}` : ""}` : h.status;
+        skip("COOLDOWN", `not called (${why}) — available again ${new Date(cool).toISOString()}`);
         continue;
       }
       const limitUntil = localLimitUntil(model, h, t);
@@ -280,7 +282,7 @@ export async function runWithFailover(req: AiRequest, deps: RouterDeps): Promise
         const err = e instanceof AiProviderError ? e : new AiProviderError("PROVIDER_ERROR", sanitizeMessage(e, [model.apiKey]));
         const done = now();
         lastErr = err;
-        attempts.push({ attempt: attemptNo, modelId: model.id, provider: model.providerName, model: model.modelName, status: "failed", errorCode: err.code, httpStatus: err.httpStatus, message: err.authReason ? `${err.authReason}: ${err.message}` : err.message, startedAt: new Date(started).toISOString(), completedAt: new Date(done).toISOString(), durationMs: done - started });
+        attempts.push({ attempt: attemptNo, modelId: model.id, provider: model.providerName, model: model.modelName, status: "failed", errorCode: err.code, httpStatus: err.httpStatus, message: [err.authReason, err.providerCode].filter(Boolean).length ? `${[err.authReason, err.providerCode].filter(Boolean).join(" · ")}: ${err.message}` : err.message, startedAt: new Date(started).toISOString(), completedAt: new Date(done).toISOString(), durationMs: done - started });
         h.failedRequests += 1;
         h.lastFailureAt = new Date(done).toISOString();
         h.lastErrorCode = errorCodeLabel(err);

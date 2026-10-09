@@ -4,7 +4,7 @@ import { z } from "zod";
 import { assertStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { AiSetupError, runAi } from "@/lib/ai/engine";
-import { AiProviderError } from "@/lib/ai/errors";
+import { AiProviderError, explainFailures } from "@/lib/ai/errors";
 import { parseJsonObject } from "@/lib/ai/providers";
 import { ALL_UNAVAILABLE_MESSAGE } from "@/lib/ai/router";
 import { buildCompletionRequest, COMPLETION_SECTIONS, mergeSections, sanitizeCompletion, type CompletionRun } from "@/lib/ai/product-completion";
@@ -107,7 +107,8 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
       const noModels = !result.ok && result.code === "NO_ELIGIBLE_MODEL";
       return {
         ok: false,
-        message: noModels ? `${result.message} Add or enable models in Settings → AI.` : ALL_UNAVAILABLE_MESSAGE,
+        // the real reason, from what the providers answered (no specs are made up when this happens)
+        message: noModels ? `${result.message} Add or enable models in Settings → AI.` : `${ALL_UNAVAILABLE_MESSAGE} ${explainFailures([...failures, ...skipped])}`,
         attempts: [...failures, ...skipped],
       };
     }

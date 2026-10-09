@@ -8,7 +8,7 @@ import { encryptSecret, encryptionAvailable, keyHint } from "@/lib/ai/crypto";
 import { AiSetupError, getModelConfig, resetModelHealth, runAi } from "@/lib/ai/engine";
 import { checkKeyAndModel, checkResearch, diagnosticStep, type DiagnosticStep } from "@/lib/ai/diagnostics";
 import { sanitizeMessage } from "@/lib/ai/errors";
-import { AI_CAPABILITIES, PROVIDER_TYPES, ROUTING_STRATEGIES } from "@/lib/ai/types";
+import { AI_CAPABILITIES, AUTH_REASONS, AUTH_REASON_LABELS, PROVIDER_TYPES, ROUTING_STRATEGIES } from "@/lib/ai/types";
 import { AiProviderError } from "@/lib/ai/errors";
 import { decryptSecret } from "@/lib/ai/crypto";
 import { discoverModels, normalizeBaseUrl, type DiscoveredModel } from "@/lib/ai/model-discovery";
@@ -146,7 +146,8 @@ export async function testAiModelAction(id: string): Promise<ActionResult<{ step
       } else {
         const last = [...res.attempts].reverse().find((a) => a.status === "failed");
         const label = last ? `${last.errorCode}${last.httpStatus ? ` (${last.httpStatus})` : ""}` : res.code;
-        steps.push(diagnosticStep("generate", false, `Failed. ${label}: ${last?.message ?? res.message}`));
+        const reason = AUTH_REASONS.find((r) => (last?.message ?? "").startsWith(r));
+        steps.push(diagnosticStep("generate", false, `Failed. ${reason ? `${AUTH_REASON_LABELS[reason]}. ` : ""}${label}: ${last?.message ?? res.message}`));
       }
     }
     revalidatePath(PATH);

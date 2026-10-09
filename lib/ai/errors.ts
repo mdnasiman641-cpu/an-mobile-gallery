@@ -15,6 +15,8 @@ export class AiProviderError extends Error {
     super(message);
     this.name = "AiProviderError";
   }
+  /** The provider's own error code, e.g. Gemini "PERMISSION_DENIED" or OpenAI "invalid_api_key". */
+  providerCode: string | null = null;
 }
 
 /**
@@ -76,8 +78,12 @@ interface ProviderErrorBody {
   message?: string;
 }
 
-/** Key-wide reasons: every model using the same key fails the same way. */
-export const KEY_WIDE_REASONS: ReadonlySet<AuthReason> = new Set(["INVALID_KEY", "API_NOT_ENABLED", "KEY_RESTRICTED"]);
+/**
+ * Key-wide reasons: every model using the same key (same provider project)
+ * fails the same way. PROJECT_DENIED is project-level at Google: in production
+ * every Gemini model on the denied project returned it.
+ */
+export const KEY_WIDE_REASONS: ReadonlySet<AuthReason> = new Set(["INVALID_KEY", "API_NOT_ENABLED", "KEY_RESTRICTED", "PROJECT_DENIED"]);
 
 /**
  * Work out why access was refused, from the provider's structured error
@@ -120,32 +126,58 @@ export function classifyHttpError(status: number, headers: Headers | null, bodyT
   const text = `${raw} ${bodyText}`.toLowerCase();
   const message = sanitizeMessage(raw || `HTTP ${status}`, secrets);
   const retryAfter = parseRetryAfter(headers, body);
+  const rawCode = body?.error?.status ?? (typeof body?.error?.code === "string" ? body.error.code : null) ?? body?.error?.type ?? null;
+  const providerCode = rawCode ? sanitizeMessage(String(rawCode), secrets).slice(0, 60) : null;
+  const err = (...args: ConstructorParameters<typeof AiProviderError>) => {
+    const e = new AiProviderError(...args);
+    e.providerCode = providerCode;
+    return e;
+  };
 
   if (status === 429 || text.includes("resource_exhausted") || text.includes("rate limit")) {
     const isBilling = text.includes("insufficient_quota") || text.includes("billing") || text.includes("exceeded your current quota");
     const isDaily = /per[ _-]?day|perday|daily/.test(text);
-    if (isBilling) return new AiProviderError("QUOTA_EXCEEDED", message, status, retryAfter, "billing");
+    if (isBilling) return err("QUOTA_EXCEEDED", message, status, retryAfter, "billing");
     if (isDaily || (text.includes("quota") && !text.includes("per minute") && !text.includes("perminute")))
-      return new AiProviderError("QUOTA_EXCEEDED", message, status, retryAfter, "day");
-    return new AiProviderError("RATE_LIMITED", message, status, retryAfter);
+      return err("QUOTA_EXCEEDED", message, status, retryAfter, "day");
+    return err("RATE_LIMITED", message, status, retryAfter);
   }
   // 401 / 403, and Gemini's 400 "API key not valid" / "User location is not supported"
   if (status === 401 || status === 403 || status === 400) {
     const reason = authReasonFor(status, body, bodyText);
     if (reason && (status !== 400 || reason === "INVALID_KEY" || reason === "REGION_NOT_SUPPORTED"))
-      return new AiProviderError("AUTH_ERROR", message, status, null, null, reason);
+      return err("AUTH_ERROR", message, status, null, null, reason);
   }
   if (status === 404) {
     // OpenAI answers 404 model_not_found both for unknown models and for models the key can't use
-    return new AiProviderError("MODEL_UNAVAILABLE", message, status, retryAfter);
+    return err("MODEL_UNAVAILABLE", message, status, retryAfter);
   }
-  if (status === 408) return new AiProviderError("TIMEOUT", message, status, retryAfter);
+  if (status === 408) return err("TIMEOUT", message, status, retryAfter);
   if (status >= 500 || text.includes("overloaded") || text.includes("unavailable"))
-    return new AiProviderError("PROVIDER_ERROR", message, status, retryAfter);
-  return new AiProviderError("BAD_REQUEST", message, status, retryAfter);
+    return err("PROVIDER_ERROR", message, status, retryAfter);
+  return err("BAD_REQUEST", message, status, retryAfter);
 }
 
 /** Short, storable error code, e.g. "AUTH_ERROR (403) PROJECT_DENIED". */
-export function errorCodeLabel(err: Pick<AiProviderError, "code" | "httpStatus" | "authReason">): string {
-  return `${err.code}${err.httpStatus ? ` (${err.httpStatus})` : ""}${err.authReason ? ` ${err.authReason}` : ""}`;
+export function errorCodeLabel(err: Pick<AiProviderError, "code" | "httpStatus" | "authReason"> & { providerCode?: string | null }): string {
+  const status = [err.httpStatus, err.providerCode].filter(Boolean).join(" ");
+  return `${err.code}${status ? ` (${status})` : ""}${err.authReason ? ` ${err.authReason}` : ""}`;
+}
+
+/**
+ * One plain-language reason for a run where every model failed, from the
+ * per-model failure lines. Only describes what the providers actually said.
+ */
+export function explainFailures(lines: string[]): string {
+  const all = lines.join("\n");
+  if (!lines.length) return "No model was tried.";
+  if (/PROJECT_DENIED/.test(all))
+    return "Google refused access for this API key's Google Cloud project (PROJECT_DENIED: “Your project has been denied access”). This is a restriction on the Google account/project, not a website error: use a key from a different Google Cloud project, contact Google support, or enable another provider in Settings → AI.";
+  if (/INVALID_KEY/.test(all)) return "The provider rejected the API key (INVALID_KEY). Enter a valid key in Settings → AI.";
+  if (/API_NOT_ENABLED/.test(all)) return "The API is not enabled for this key's project (API_NOT_ENABLED). Enable it in the provider's console.";
+  if (/KEY_RESTRICTED/.test(all)) return "The key's restrictions block this API (KEY_RESTRICTED). Check the key's API restrictions.";
+  if (/MODEL_DENIED/.test(all)) return "This key has no access to the configured models (MODEL_DENIED).";
+  if (/QUOTA_EXCEEDED/.test(all)) return "The models' quota is used up (QUOTA_EXCEEDED). They are tried again after the quota resets.";
+  if (/RATE_LIMITED/.test(all)) return "The models are rate limited right now (RATE_LIMITED). Try again in a few minutes.";
+  return `Reason: ${lines[0]}`;
 }

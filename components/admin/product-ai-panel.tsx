@@ -115,8 +115,9 @@ export function ProductAiPanel(p: AiPanelProps) {
       {p.error ? (
         <div className="mt-3 rounded-lg border border-deal/30 bg-deal-tint p-3 text-sm" role="alert">
           <p className="flex items-center gap-2 font-semibold text-deal">
-            <AlertTriangle className="h-4 w-4" aria-hidden /> {p.error.message}
+            <AlertTriangle className="h-4 w-4" aria-hidden /> {p.error.message.split(/(?<=\.)\s/)[0]}
           </p>
+          {p.error.message.split(/(?<=\.)\s/).length > 1 ? <p className="mt-1">{p.error.message.split(/(?<=\.)\s/).slice(1).join(" ")}</p> : null}
           {p.error.details.length ? (
             <ul className="mt-1.5 list-disc space-y-0.5 pl-5 text-xs text-ink-soft">
               {p.error.details.map((d, i) => (
