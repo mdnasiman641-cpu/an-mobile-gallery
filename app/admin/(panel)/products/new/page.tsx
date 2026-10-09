@@ -5,12 +5,13 @@ import { getSiteSettings } from "@/services/settings";
 import { AdminPageHeader } from "@/components/admin/page-header";
 import { ProductForm } from "@/components/admin/product-form";
 import { emptyProductValues } from "@/lib/product-form-values";
+import { aiFormSetup } from "@/lib/ai/form-setup";
 
 export const metadata: Metadata = { title: "New product" };
 
 export default async function NewProductPage() {
   const session = await requireStaff("editor");
-  const [{ brands, categories }, settings] = await Promise.all([getAdminTaxonomy(), getSiteSettings()]);
+  const [{ brands, categories }, settings, ai] = await Promise.all([getAdminTaxonomy(), getSiteSettings(), aiFormSetup()]);
   return (
     <>
       <AdminPageHeader title="New product" back={{ href: "/admin/products", label: "Products" }} />
@@ -20,6 +21,8 @@ export default async function NewProductPage() {
         categories={categories}
         storeName={settings.store_name}
         canSeeCost={hasRole(session, "admin")}
+        aiSetupMessage={ai.setupMessage}
+        canManageAi={hasRole(session, "admin")}
       />
     </>
   );

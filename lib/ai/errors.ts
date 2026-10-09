@@ -1,4 +1,4 @@
-import type { AiErrorCode } from "@/lib/ai/types";
+import type { AiErrorCode, AuthReason } from "@/lib/ai/types";
 
 /** An error from a provider, already classified and safe to store/show. */
 export class AiProviderError extends Error {
@@ -9,6 +9,8 @@ export class AiProviderError extends Error {
     public retryAfterMs: number | null = null,
     /** "day" | "billing" for QUOTA_EXCEEDED */
     public quotaScope: "day" | "billing" | null = null,
+    /** For AUTH_ERROR: what exactly was refused. */
+    public authReason: AuthReason | null = null,
   ) {
     super(message);
     this.name = "AiProviderError";
@@ -61,17 +63,60 @@ export function parseRetryAfter(headers: Headers | null, body: unknown, now = Da
   return null;
 }
 
+interface ProviderErrorBody {
+  error?: {
+    message?: string;
+    /** Gemini: "PERMISSION_DENIED", "INVALID_ARGUMENT", …  OpenAI: undefined */
+    status?: string;
+    /** OpenAI: "invalid_api_key", "model_not_found", …  Gemini: the HTTP code */
+    code?: string | number;
+    type?: string;
+    details?: { "@type"?: string; reason?: string; retryDelay?: string }[];
+  };
+  message?: string;
+}
+
+/** Key-wide reasons: every model using the same key fails the same way. */
+export const KEY_WIDE_REASONS: ReadonlySet<AuthReason> = new Set(["INVALID_KEY", "API_NOT_ENABLED", "KEY_RESTRICTED"]);
+
+/**
+ * Work out why access was refused, from the provider's structured error
+ * (google.rpc.ErrorInfo reasons, OpenAI error codes) and its message.
+ * Returns null when the response is not an access problem.
+ */
+export function authReasonFor(status: number, body: ProviderErrorBody | null, rawText: string): AuthReason | null {
+  const reasons = (body?.error?.details ?? []).map((d) => String(d?.reason ?? "").toUpperCase()).filter(Boolean);
+  const code = String(body?.error?.code ?? "").toLowerCase();
+  const rpcStatus = String(body?.error?.status ?? "").toUpperCase();
+  const text = `${body?.error?.message ?? body?.message ?? ""} ${rawText}`.toLowerCase();
+  const has = (...r: string[]) => r.some((x) => reasons.includes(x));
+
+  if (has("API_KEY_INVALID", "API_KEY_EXPIRED") || code === "invalid_api_key" || /api key (?:not valid|expired|is invalid)|incorrect api key|invalid api key|invalid x-api-key|api_key_invalid/.test(text))
+    return "INVALID_KEY";
+  if (has("SERVICE_DISABLED", "API_DISABLED") || /has not been used in project|api (?:has not been|is not) enabled|is disabled\. enable it|service_disabled/.test(text)) return "API_NOT_ENABLED";
+  if (has("API_KEY_SERVICE_BLOCKED", "API_KEY_HTTP_REFERRER_BLOCKED", "API_KEY_IP_ADDRESS_BLOCKED", "API_KEY_ANDROID_APP_BLOCKED", "API_KEY_IOS_APP_BLOCKED") || /requests (?:to this api|from this) .* (?:are|is) blocked/.test(text))
+    return "KEY_RESTRICTED";
+  if (/user location is not supported|unsupported_country|not available in your (?:country|region)|country, region, or territory not supported/.test(text) || code === "unsupported_country_region_territory")
+    return "REGION_NOT_SUPPORTED";
+  if (has("CONSUMER_SUSPENDED", "BILLING_DISABLED") || /project has been denied access|project .*(?:suspended|denied)|organization .*(?:disabled|deactivated)|account .*(?:suspended|deactivated)/.test(text))
+    return "PROJECT_DENIED";
+  if (code === "model_not_found" || /(?:do(?:es)? not|don't) have access to (?:the )?model|model .*(?:not found|not supported) .*(?:access|permission)|permission denied on resource .*model|not allowed to (?:use|sample from) (?:this )?model/.test(text))
+    return status === 404 ? null : "MODEL_DENIED";
+  if (status === 401) return "INVALID_KEY";
+  if (status === 403 || rpcStatus === "PERMISSION_DENIED" || rpcStatus === "UNAUTHENTICATED") return "ACCESS_DENIED";
+  return null;
+}
+
 /** Turn an HTTP error response into a classified, sanitized error. */
 export function classifyHttpError(status: number, headers: Headers | null, bodyText: string, secrets: string[] = []): AiProviderError {
-  let body: unknown = null;
+  let body: ProviderErrorBody | null = null;
   try {
-    body = JSON.parse(bodyText);
+    const parsed: unknown = JSON.parse(bodyText);
+    body = parsed && typeof parsed === "object" ? (parsed as ProviderErrorBody) : null;
   } catch {
     body = null;
   }
-  const raw =
-    (body as { error?: { message?: string } } | null)?.error?.message ??
-    (typeof body === "object" && body && "message" in body ? String((body as { message: unknown }).message) : bodyText);
+  const raw = body?.error?.message ?? (body && "message" in body ? String(body.message) : bodyText);
   const text = `${raw} ${bodyText}`.toLowerCase();
   const message = sanitizeMessage(raw || `HTTP ${status}`, secrets);
   const retryAfter = parseRetryAfter(headers, body);
@@ -84,10 +129,23 @@ export function classifyHttpError(status: number, headers: Headers | null, bodyT
       return new AiProviderError("QUOTA_EXCEEDED", message, status, retryAfter, "day");
     return new AiProviderError("RATE_LIMITED", message, status, retryAfter);
   }
-  if (status === 401 || status === 403) return new AiProviderError("AUTH_ERROR", message, status, retryAfter);
-  if (status === 404) return new AiProviderError("MODEL_UNAVAILABLE", message, status, retryAfter);
+  // 401 / 403, and Gemini's 400 "API key not valid" / "User location is not supported"
+  if (status === 401 || status === 403 || status === 400) {
+    const reason = authReasonFor(status, body, bodyText);
+    if (reason && (status !== 400 || reason === "INVALID_KEY" || reason === "REGION_NOT_SUPPORTED"))
+      return new AiProviderError("AUTH_ERROR", message, status, null, null, reason);
+  }
+  if (status === 404) {
+    // OpenAI answers 404 model_not_found both for unknown models and for models the key can't use
+    return new AiProviderError("MODEL_UNAVAILABLE", message, status, retryAfter);
+  }
   if (status === 408) return new AiProviderError("TIMEOUT", message, status, retryAfter);
   if (status >= 500 || text.includes("overloaded") || text.includes("unavailable"))
     return new AiProviderError("PROVIDER_ERROR", message, status, retryAfter);
   return new AiProviderError("BAD_REQUEST", message, status, retryAfter);
+}
+
+/** Short, storable error code, e.g. "AUTH_ERROR (403) PROJECT_DENIED". */
+export function errorCodeLabel(err: Pick<AiProviderError, "code" | "httpStatus" | "authReason">): string {
+  return `${err.code}${err.httpStatus ? ` (${err.httpStatus})` : ""}${err.authReason ? ` ${err.authReason}` : ""}`;
 }

@@ -40,7 +40,8 @@ export function normalizeBaseUrl(type: ProviderType, raw: string): string {
   return url;
 }
 
-async function getJson(url: string, headers: Record<string, string>, apiKey: string, fetchImpl: FetchLike): Promise<unknown> {
+/** GET a provider JSON endpoint. Errors are classified and never contain the key. */
+export async function getJson(url: string, headers: Record<string, string>, apiKey: string, fetchImpl: FetchLike): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LIST_TIMEOUT_MS);
   let res: Response;

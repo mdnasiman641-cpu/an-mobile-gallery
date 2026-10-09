@@ -99,6 +99,8 @@ export async function processAiJob(jobId: string): Promise<JobOutcome> {
     .from("ai_jobs")
     .update({ status: "processing", started_at: new Date().toISOString() })
     .eq("id", jobId)
+    // "complete" jobs belong to the product form's Complete with AI (never processed here)
+    .neq("task_type", "complete")
     .or(`status.eq.pending,and(status.eq.processing,started_at.lt.${staleBefore})`)
     .select("id, product_id, task_type, replace_manual, trigger")
     .maybeSingle();
@@ -283,6 +285,7 @@ export async function processPendingJobs(limit = 2): Promise<JobOutcome[]> {
   const { data } = await client
     .from("ai_jobs")
     .select("id")
+    .neq("task_type", "complete")
     .or(`status.eq.pending,and(status.eq.processing,started_at.lt.${staleBefore})`)
     .order("created_at", { ascending: true })
     .limit(limit);

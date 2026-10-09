@@ -261,7 +261,7 @@ export default async function AiProductsPage({ searchParams }: { searchParams: P
               <li key={j.id} className="rounded-[var(--radius-card)] border border-line bg-surface p-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-semibold">{j.product?.name ?? "Deleted product"}</span>
-                  <Badge>{j.task_type}</Badge>
+                  <Badge>{j.task_type === "complete" ? "complete with AI" : j.task_type}</Badge>
                   <Badge tone={j.status === "succeeded" ? "signal" : j.status === "failed" ? "deal" : "neutral"}>{j.status}</Badge>
                   {j.fallback_used ? <Badge tone="warn">fallback used</Badge> : null}
                   <span className="text-xs text-ink-mute">

@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/misc";
 import { statusLabel } from "@/lib/utils";
 import { AiAssistant, type AssistantProps } from "@/components/admin/ai-assistant";
 import { SPEC_FIELDS, fieldSource, type Applied, type ProductAiContent, type ProductSnapshot, type TrackedField } from "@/lib/ai/product-content";
+import { aiFormSetup } from "@/lib/ai/form-setup";
 import type { Product, ProductFeature, ProductImage, ProductSpecification, ProductVariant } from "@/types";
 
 export const metadata: Metadata = { title: "Edit product" };
@@ -24,7 +25,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
   const canSeeCost = hasRole(session, "admin");
   const supabase = await createClient();
 
-  const [{ data }, taxonomy, settings, costRes, aiRes, jobRes, extRes] = await Promise.all([
+  const [{ data }, taxonomy, settings, costRes, aiRes, jobRes, extRes, aiForm] = await Promise.all([
     supabase
       .from("products")
       .select(
@@ -51,6 +52,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
       .order("last_synced_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
+    aiFormSetup(id),
   ]);
   if (!data) notFound();
 
@@ -215,6 +217,9 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
         categories={taxonomy.categories}
         storeName={settings.store_name}
         canSeeCost={canSeeCost}
+        aiCompletion={aiForm.completion}
+        aiSetupMessage={aiForm.setupMessage}
+        canManageAi={canSeeCost}
       />
     </>
   );

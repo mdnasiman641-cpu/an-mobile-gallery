@@ -1,4 +1,4 @@
-import { AiProviderError, sanitizeMessage } from "@/lib/ai/errors";
+import { AiProviderError, KEY_WIDE_REASONS, errorCodeLabel, sanitizeMessage } from "@/lib/ai/errors";
 import { callModel, type FetchLike } from "@/lib/ai/providers";
 import {
   TASK_REQUIREMENTS,
@@ -22,12 +22,19 @@ import {
  * - Models in cooldown, or over their own RPM/RPD limits, are skipped without
  *   a request. Cooldown comes from Retry-After when the provider sends it,
  *   otherwise from exponential backoff (30 s, 60 s, 5 min, 15 min).
+ * - Access refusals (401/403) are never retried. When the KEY itself is
+ *   rejected (invalid key, API not enabled, key restrictions), every other
+ *   model using the same key is put in the same cooldown without a request.
+ *   Project / model denials only affect the model that got them.
  * - Success resets the model to HEALTHY. A model disabled by the admin is
  *   never re-enabled here.
  */
 
 export const BACKOFF_MS = [30_000, 60_000, 5 * 60_000, 15 * 60_000];
 const AUTH_COOLDOWN_MS = 6 * 3600_000;
+/** Access refusals that won't fix themselves: wait a day (or until the admin resets / saves a new key). */
+const PERMANENT_AUTH_COOLDOWN_MS = 24 * 3600_000;
+const REGION_COOLDOWN_MS = 3600_000;
 const MODEL_UNAVAILABLE_COOLDOWN_MS = 3600_000;
 const BILLING_COOLDOWN_MS = 24 * 3600_000;
 
@@ -101,6 +108,8 @@ export function cooldownFor(err: AiProviderError, consecutive: number, now: numb
       return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 8, 0, 0); // daily quotas reset around 08:00 UTC
     }
     case "AUTH_ERROR":
+      if (err.authReason === "REGION_NOT_SUPPORTED") return now + REGION_COOLDOWN_MS;
+      if (err.authReason && err.authReason !== "ACCESS_DENIED") return now + PERMANENT_AUTH_COOLDOWN_MS;
       return now + AUTH_COOLDOWN_MS;
     case "MODEL_UNAVAILABLE":
       return now + MODEL_UNAVAILABLE_COOLDOWN_MS;
@@ -203,6 +212,9 @@ export async function runWithFailover(req: AiRequest, deps: RouterDeps): Promise
   }
 
   const maxCalls = Math.min(deps.maxAttempts ?? eligible.length, eligible.length);
+  // Keys rejected during this run (in memory only, never stored).
+  const keyOf = (m: AiModelConfig) => `${m.providerType}|${m.apiBaseUrl.replace(/\/+$/, "")}|${m.apiKey ?? ""}`;
+  const rejectedKeys = new Map<string, { by: string; err: AiProviderError }>();
   let calls = 0;
   let attemptNo = 0;
   let firstCalled: string | null = null;
@@ -221,6 +233,11 @@ export async function runWithFailover(req: AiRequest, deps: RouterDeps): Promise
 
     if (!model.apiKey) {
       skip("NO_KEY", "no API key saved");
+      continue;
+    }
+    const rejected = rejectedKeys.get(keyOf(model));
+    if (rejected) {
+      skip("AUTH_ERROR", `same API key was rejected on ${rejected.by} (${rejected.err.authReason})`);
       continue;
     }
     // Test connection ignores cooldown and local limits so the admin can check a fix.
@@ -263,10 +280,10 @@ export async function runWithFailover(req: AiRequest, deps: RouterDeps): Promise
         const err = e instanceof AiProviderError ? e : new AiProviderError("PROVIDER_ERROR", sanitizeMessage(e, [model.apiKey]));
         const done = now();
         lastErr = err;
-        attempts.push({ attempt: attemptNo, modelId: model.id, provider: model.providerName, model: model.modelName, status: "failed", errorCode: err.code, httpStatus: err.httpStatus, message: err.message, startedAt: new Date(started).toISOString(), completedAt: new Date(done).toISOString(), durationMs: done - started });
+        attempts.push({ attempt: attemptNo, modelId: model.id, provider: model.providerName, model: model.modelName, status: "failed", errorCode: err.code, httpStatus: err.httpStatus, message: err.authReason ? `${err.authReason}: ${err.message}` : err.message, startedAt: new Date(started).toISOString(), completedAt: new Date(done).toISOString(), durationMs: done - started });
         h.failedRequests += 1;
         h.lastFailureAt = new Date(done).toISOString();
-        h.lastErrorCode = err.httpStatus ? `${err.code} (${err.httpStatus})` : err.code;
+        h.lastErrorCode = errorCodeLabel(err);
         h.lastErrorMessage = sanitizeMessage(err.message, [model.apiKey]);
         if (!(TRANSIENT.has(err.code) && retry < model.maxRetries)) break;
       }
@@ -276,7 +293,22 @@ export async function runWithFailover(req: AiRequest, deps: RouterDeps): Promise
       h.status = statusFor(lastErr);
       const until = cooldownFor(lastErr, h.consecutiveFailures, now());
       h.cooldownUntil = until ? new Date(until).toISOString() : null;
-      reasons.push(`${model.displayName}: ${lastErr.code}${lastErr.httpStatus ? ` (${lastErr.httpStatus})` : ""} – ${lastErr.message}`);
+      reasons.push(`${model.displayName}: ${errorCodeLabel(lastErr)} – ${lastErr.message}`);
+      if (lastErr.code === "AUTH_ERROR" && lastErr.authReason && KEY_WIDE_REASONS.has(lastErr.authReason)) {
+        rejectedKeys.set(keyOf(model), { by: model.displayName, err: lastErr });
+        // Same key on other models: same result, so cool them down now instead of calling them.
+        for (const other of deps.models) {
+          if (other.id === model.id || keyOf(other) !== keyOf(model)) continue;
+          const oh = deps.health.get(other.id) ?? emptyHealth(other.id);
+          deps.health.set(other.id, oh);
+          oh.status = "AUTH_ERROR";
+          oh.lastFailureAt = h.lastFailureAt;
+          oh.lastErrorCode = errorCodeLabel(lastErr);
+          oh.lastErrorMessage = `Same API key as ${model.displayName}: ${sanitizeMessage(lastErr.message, [model.apiKey])}`.slice(0, 280);
+          oh.cooldownUntil = h.cooldownUntil;
+          touched.set(other.id, oh);
+        }
+      }
     }
   }
 

@@ -1,11 +1,37 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { ArrowDown, ArrowUp, Copy, ExternalLink, ImagePlus, Plus, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { saveProductAction, duplicateProductAction, deleteProductAction } from "@/app/admin/(panel)/products/actions";
+import { completeProductWithAiAction } from "@/app/admin/(panel)/products/ai-actions";
+import { AiTag, ProductAiPanel, type ReviewItem } from "@/components/admin/product-ai-panel";
+import {
+  AI_FIELDS,
+  COMPLETION_SECTIONS,
+  SECTION_FIELDS,
+  completionToForm,
+  fieldOrigin,
+  isProtectedSpec,
+  manualConflicts,
+  mergeIntoForm,
+  mergeSections,
+  needsReview,
+  pickSections,
+  quickSpec,
+  removeAiContent,
+  specOrigin,
+  suggestSku,
+  unappliedFields,
+  withQuickSpec,
+  type AiField,
+  type AiFormValues,
+  type CompletionRun,
+  type CompletionSection,
+  type FormContent,
+} from "@/lib/ai/product-completion";
 import { Button } from "@/components/ui/button";
 import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/form";
 import { RichText } from "@/components/ui/rich-text";
@@ -36,18 +62,50 @@ const COMMON_SPECS: [string, string][] = [
 
 const newKey = () => Math.random().toString(36).slice(2);
 
+/** Which tab each AI-filled field lives on (for the "AI" marker on tabs). */
+const TAB_FIELDS: Partial<Record<Tab, AiField[]>> = {
+  "Basic information": ["brand_id", "category_id", "model", "mpn", "barcode", "warranty"],
+  Specifications: ["specs", "features"],
+  Description: ["short_description", "description"],
+  SEO: ["meta_title", "meta_description", "slug"],
+};
+
+const formContent = (x: ProductFormValues): FormContent => ({
+  brand_id: x.brand_id,
+  category_id: x.category_id,
+  model: x.model,
+  mpn: x.mpn,
+  barcode: x.barcode,
+  warranty: x.warranty,
+  short_description: x.short_description,
+  description: x.description,
+  features: x.features,
+  meta_title: x.meta_title,
+  meta_description: x.meta_description,
+  slug: x.slug,
+  specs: x.specs,
+});
+
 export function ProductForm({
   initial,
   brands,
   categories,
   storeName,
   canSeeCost,
+  aiCompletion = null,
+  aiSetupMessage = null,
+  canManageAi = false,
 }: {
   initial: ProductFormValues;
   brands: Pick<Brand, "id" | "name">[];
   categories: Pick<Category, "id" | "name" | "parent_id">[];
   storeName: string;
   canSeeCost: boolean;
+  /** Last "Complete with AI" result for this product (cached; never re-requested on load). */
+  aiCompletion?: CompletionRun | null;
+  /** Why Complete with AI can't run (migration missing / no models), or null. */
+  aiSetupMessage?: string | null;
+  canManageAi?: boolean;
 }) {
   const router = useRouter();
   const [v, setV] = useState<ProductFormValues>(initial);
@@ -56,7 +114,25 @@ export function ProductForm({
   const [saving, startSave] = useTransition();
   const [uploading, setUploading] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
-  const isNew = !initial.id;
+  // A new product becomes a saved draft the first time AI is used.
+  const [productId, setProductId] = useState<string | null>(initial.id ?? null);
+  const isNew = !productId;
+
+  // ---------------------------------------------------------------- AI
+  const [ai, setAi] = useState<AiFormValues>(() => (aiCompletion ? completionToForm(aiCompletion.completion) : {}));
+  const [run, setRun] = useState<CompletionRun | null>(aiCompletion);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [justCompleted, setJustCompleted] = useState(false);
+  const [aiError, setAiError] = useState<{ message: string; details: string[]; draftSaved: boolean } | null>(null);
+  const [confirm, setConfirm] = useState<{ proposed: AiFormValues; conflicts: string[] } | null>(null);
+  const [lastApply, setLastApply] = useState<{ applied: string[]; kept: string[] } | null>(null);
+  const busyRef = useRef(false);
+  const vRef = useRef(v);
+  const aiRef = useRef(ai);
+  useEffect(() => {
+    vRef.current = v;
+    aiRef.current = ai;
+  }, [v, ai]);
 
   const set = <K extends keyof ProductFormValues>(key: K, value: ProductFormValues[K]) => setV((prev) => ({ ...prev, [key]: value }));
   const hasVariants = v.variants.length > 0;
@@ -147,7 +223,8 @@ export function ProductForm({
     setV((prev) => ({ ...prev, variants: prev.variants.map((x) => (x.key === key ? { ...x, ...patch } : x)) }));
 
   // ------------------------------------------------------------------ save
-  function save(statusOverride?: ProductStatus) {
+  function buildPayload(v: ProductFormValues, id: string | null, statusOverride?: ProductStatus) {
+    const hasVariants = v.variants.length > 0;
     const product = {
       name: v.name,
       slug: v.slug,
@@ -175,35 +252,38 @@ export function ProductForm({
       meta_description: v.meta_description,
       canonical_url: v.canonical_url,
     };
+    return {
+      id,
+      product,
+      variants: v.variants.map((x) => ({
+        id: x.id ?? null,
+        sku: x.sku,
+        storage: x.storage,
+        ram: x.ram,
+        color: x.color,
+        color_hex: x.color_hex,
+        price: x.price,
+        sale_price: x.sale_price,
+        stock: x.stock || "0",
+        image_url: x.image_url,
+        status: x.status,
+      })),
+      specs: v.specs.filter((s) => s.name.trim() && s.value.trim()),
+      features: v.features.map((f) => f.trim()).filter(Boolean),
+      images: v.images.map((i) => ({
+        id: i.id ?? null,
+        url: i.url,
+        storage_path: i.storage_path,
+        alt_text: i.alt_text,
+        width: i.width,
+        height: i.height,
+      })),
+    };
+  }
 
+  function save(statusOverride?: ProductStatus) {
     startSave(async () => {
-      const res = await saveProductAction({
-        id: initial.id ?? null,
-        product,
-        variants: v.variants.map((x) => ({
-          id: x.id ?? null,
-          sku: x.sku,
-          storage: x.storage,
-          ram: x.ram,
-          color: x.color,
-          color_hex: x.color_hex,
-          price: x.price,
-          sale_price: x.sale_price,
-          stock: x.stock || "0",
-          image_url: x.image_url,
-          status: x.status,
-        })),
-        specs: v.specs.filter((s) => s.name.trim() && s.value.trim()),
-        features: v.features.map((f) => f.trim()).filter(Boolean),
-        images: v.images.map((i) => ({
-          id: i.id ?? null,
-          url: i.url,
-          storage_path: i.storage_path,
-          alt_text: i.alt_text,
-          width: i.width,
-          height: i.height,
-        })),
-      });
+      const res = await saveProductAction(buildPayload(v, productId, statusOverride));
 
       if (!res.ok) {
         setErrors(res.fieldErrors ?? {});
@@ -226,10 +306,129 @@ export function ProductForm({
       if (statusOverride) set("status", statusOverride);
       if (res.message?.startsWith("Saved with warnings")) toast.warning(res.message);
       else toast.success(res.message ?? "Saved");
-      if (isNew && res.data) router.replace(`/admin/products/${res.data.id}`);
+      if (!initial.id && res.data) router.replace(`/admin/products/${res.data.id}`);
       else router.refresh();
     });
   }
+
+  // ------------------------------------------------------- Complete with AI
+  const ram = quickSpec(v.specs, "ram");
+  const storage = quickSpec(v.specs, "storage");
+
+  /** Save a new product as a Draft (never published) so AI has a product to attach to. */
+  async function ensureDraft(): Promise<string | null> {
+    if (productId) return productId;
+    const res = await saveProductAction(buildPayload(vRef.current, null, "draft"));
+    if (!res.ok || !res.data) {
+      setErrors(res.fieldErrors ?? {});
+      toast.error(res.message ?? "The draft couldn't be saved.");
+      return null;
+    }
+    setProductId(res.data.id);
+    // Same URL as the edit page, so a reload keeps the draft and the AI result.
+    window.history.replaceState(null, "", `/admin/products/${res.data.id}`);
+    return res.data.id;
+  }
+
+  function applyAi(proposed: AiFormValues, replaceManual: boolean) {
+    const res = mergeIntoForm(formContent(vRef.current), aiRef.current, proposed, replaceManual);
+    setV((prev) => ({ ...prev, ...res.patch }));
+    setAi(res.ai);
+    setLastApply({ applied: res.applied, kept: res.keptManual });
+    setConfirm(null);
+  }
+
+  function offerAi(proposed: AiFormValues) {
+    const conflicts = manualConflicts(formContent(vRef.current), aiRef.current, proposed);
+    if (conflicts.length) setConfirm({ proposed, conflicts });
+    else applyAi(proposed, false);
+  }
+
+  async function completeWithAi(sections: CompletionSection[]) {
+    if (busyRef.current) return; // one request at a time
+    const cur = vRef.current;
+    const quickErrors: Record<string, string> = {};
+    if (cur.name.trim().length < 2) quickErrors.name = "Enter the product name";
+    if (!(Number(cur.price) > 0) && cur.variants.length === 0) quickErrors.price = "Enter the selling price";
+    if (!quickSpec(cur.specs, "ram").trim()) quickErrors.quick_ram = "Enter the RAM";
+    if (!quickSpec(cur.specs, "storage").trim()) quickErrors.quick_storage = "Enter the ROM / storage";
+    if (Object.keys(quickErrors).length) {
+      setErrors(quickErrors);
+      toast.error("Fill in the product name, selling price, RAM and storage first.");
+      return;
+    }
+    busyRef.current = true;
+    setAiBusy(true);
+    setAiError(null);
+    setJustCompleted(false);
+    setErrors({});
+    let draftId: string | null = null;
+    try {
+      draftId = await ensureDraft();
+      if (!draftId) return;
+      const res = await completeProductWithAiAction({
+        productId: draftId,
+        name: cur.name,
+        ram: quickSpec(cur.specs, "ram"),
+        storage: quickSpec(cur.specs, "storage"),
+        condition: cur.condition,
+        brandId: cur.brand_id || null,
+        categoryId: cur.category_id || null,
+        model: cur.model || null,
+        sections,
+      });
+      if (!res.ok || !res.data) {
+        setAiError({ message: res.message ?? "All configured AI models are currently unavailable.", details: res.attempts ?? [], draftSaved: true });
+        return;
+      }
+      const data = res.data;
+      const partial = sections.length < COMPLETION_SECTIONS.length;
+      setRun((prev) => (prev && partial ? { ...data, completion: mergeSections(prev.completion, data.completion) } : data));
+      setJustCompleted(true);
+      offerAi(pickSections(completionToForm(data.completion), sections));
+      toast.success("AI completed the product information. Please review before saving.");
+    } catch {
+      setAiError({ message: "The AI request failed. Please try again.", details: [], draftSaved: Boolean(draftId) });
+    } finally {
+      busyRef.current = false;
+      setAiBusy(false);
+    }
+  }
+
+  function clearAi(fields: AiField[]) {
+    const res = removeAiContent(formContent(v), ai, fields);
+    setV((prev) => ({ ...prev, ...res.patch }));
+    setAi(res.ai);
+    toast(res.removed.length ? `Removed AI text from: ${res.removed.join(", ")}` : "No AI text left to remove (edited fields are kept).");
+  }
+
+  function applyReviewedValue(item: ReviewItem) {
+    if (!item.value) return;
+    const direct: Record<string, keyof ProductFormValues> = { Model: "model", MPN: "mpn", "Barcode (GTIN)": "barcode", Warranty: "warranty" };
+    const field = direct[item.label];
+    if (field) {
+      setV((prev) => ({ ...prev, [field]: item.value as string }));
+      return;
+    }
+    const spec = run?.completion.specs.find((s) => s.label === item.label);
+    setV((prev) => {
+      const i = prev.specs.findIndex((r) => r.name.trim().toLowerCase() === item.label.toLowerCase());
+      const specs = i >= 0 ? prev.specs.map((r, n) => (n === i ? { ...r, value: item.value as string } : r)) : [...prev.specs, { group_name: spec?.group ?? "Other", name: item.label, value: item.value as string }];
+      return { ...prev, specs };
+    });
+  }
+
+  const content = formContent(v);
+  const specStatus = (name: string) => completion?.specs.find((x) => x.label.toLowerCase() === name.trim().toLowerCase())?.status ?? "LIKELY";
+  const origin = (f: Exclude<AiField, "specs">) => fieldOrigin(f, content, ai);
+  const aiFieldCount =
+    AI_FIELDS.filter((f) => f !== "specs" && origin(f as Exclude<AiField, "specs">) === "ai").length + v.specs.filter((r) => !isProtectedSpec(r.name) && specOrigin(r, ai) === "ai").length;
+  const tabHasAi = (t: Tab) =>
+    (TAB_FIELDS[t] ?? []).some((f) => (f === "specs" ? v.specs.some((r) => !isProtectedSpec(r.name) && specOrigin(r, ai) === "ai") : origin(f) === "ai"));
+  const completion = run?.completion ?? null;
+  const unapplied = completion ? unappliedFields(content, completionToForm(completion)) : [];
+  const brandName = brands.find((b) => b.id === v.brand_id)?.name ?? completion?.brand?.name ?? null;
+  const skuSuggestion = completion && !v.sku.trim() && v.name.trim() && ram && storage ? suggestSku(v.name, brandName, ram, storage) : null;
 
   const tabBtn = (t: Tab) =>
     cn(
@@ -243,12 +442,47 @@ export function ProductForm({
 
   return (
     <div className="pb-24">
+      <ProductAiPanel
+        name={v.name}
+        price={v.price}
+        ram={ram}
+        storage={storage}
+        onName={(x) => set("name", x)}
+        onPrice={(x) => set("price", x)}
+        onRam={(x) => setV((prev) => ({ ...prev, specs: withQuickSpec(prev.specs, "ram", x) }))}
+        onStorage={(x) => setV((prev) => ({ ...prev, specs: withQuickSpec(prev.specs, "storage", x) }))}
+        errors={errors}
+        hasVariants={hasVariants}
+        setupMessage={aiSetupMessage}
+        canManageAi={canManageAi}
+        busy={aiBusy}
+        disabled={saving || uploading > 0}
+        onComplete={(sections) => void completeWithAi(sections)}
+        run={run}
+        justCompleted={justCompleted}
+        error={aiError}
+        confirm={confirm ? { conflicts: confirm.conflicts } : null}
+        onConfirm={(replace) => confirm && applyAi(confirm.proposed, replace)}
+        lastApply={lastApply}
+        unapplied={unapplied}
+        onApplyCached={() => completion && offerAi(completionToForm(completion))}
+        review={completion ? needsReview(completion) : []}
+        onUseValue={applyReviewedValue}
+        skuSuggestion={skuSuggestion}
+        onUseSku={() => skuSuggestion && set("sku", skuSuggestion)}
+        newBrand={completion?.brand && !completion.brand.id ? completion.brand.name : null}
+        newCategory={completion?.category && !completion.category.id ? completion.category.name : null}
+        aiFieldCount={aiFieldCount}
+        onClearSection={(sec) => clearAi(SECTION_FIELDS[sec])}
+        onRemoveAll={() => clearAi(AI_FIELDS)}
+      />
       <div role="tablist" aria-label="Product sections" className="no-scrollbar flex overflow-x-auto rounded-t-[var(--radius-card)] border border-line bg-surface px-2">
         {TABS.map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} className={tabBtn(t)} onClick={() => setTab(t)}>
             {t}
             {t === "Variants" && v.variants.length ? <span className="ml-1 text-ink-mute">({v.variants.length})</span> : null}
             {t === "Images" && v.images.length ? <span className="ml-1 text-ink-mute">({v.images.length})</span> : null}
+            {tabHasAi(t) ? <span className="ml-1.5 rounded-full bg-signal-tint px-1.5 text-[11px] font-bold text-signal-dark">AI</span> : null}
           </button>
         ))}
       </div>
@@ -259,7 +493,7 @@ export function ProductForm({
           <Field label="Product name" htmlFor="name" error={errors.name} required className="md:col-span-2" hint="e.g. Apple iPhone 15 Pro Max 256GB">
             <Input id="name" value={v.name} onChange={(e) => set("name", e.target.value)} aria-invalid={Boolean(errors.name)} />
           </Field>
-          <Field label="Brand" htmlFor="brand_id">
+          <Field label="Brand" htmlFor="brand_id" aside={<AiTag origin={origin("brand_id")} />}>
             <Select id="brand_id" value={v.brand_id} onChange={(e) => set("brand_id", e.target.value)}>
               <option value="">No brand</option>
               {brands.map((b) => (
@@ -269,7 +503,7 @@ export function ProductForm({
               ))}
             </Select>
           </Field>
-          <Field label="Category" htmlFor="category_id">
+          <Field label="Category" htmlFor="category_id" aside={<AiTag origin={origin("category_id")} />}>
             <Select id="category_id" value={v.category_id} onChange={(e) => set("category_id", e.target.value)}>
               <option value="">No category</option>
               {topCategories.map((c) => [
@@ -287,7 +521,7 @@ export function ProductForm({
               ])}
             </Select>
           </Field>
-          <Field label="Model" htmlFor="model" hint="Manufacturer model number, e.g. SM-S938B">
+          <Field label="Model" htmlFor="model" hint="Model name or manufacturer model number, e.g. Galaxy S25 Ultra / SM-S938B" aside={<AiTag origin={origin("model")} />}>
             <Input id="model" value={v.model} onChange={(e) => set("model", e.target.value)} />
           </Field>
           <Field label="Condition" htmlFor="condition">
@@ -300,13 +534,13 @@ export function ProductForm({
           <Field label="SKU" htmlFor="sku" error={errors.sku} hint="Your internal code, unique per product">
             <Input id="sku" value={v.sku} onChange={(e) => set("sku", e.target.value)} />
           </Field>
-          <Field label="Barcode (GTIN / EAN / UPC)" htmlFor="barcode" error={errors.barcode} hint="Helps Google Shopping match the product">
+          <Field label="Barcode (GTIN / EAN / UPC)" htmlFor="barcode" error={errors.barcode} hint="Helps Google Shopping match the product. AI fills it only when verified." aside={<AiTag origin={origin("barcode")} />}>
             <Input id="barcode" value={v.barcode} inputMode="numeric" onChange={(e) => set("barcode", e.target.value)} />
           </Field>
-          <Field label="MPN" htmlFor="mpn" hint="Manufacturer part number (optional)">
+          <Field label="MPN" htmlFor="mpn" hint="Manufacturer part number (optional)" aside={<AiTag origin={origin("mpn")} />}>
             <Input id="mpn" value={v.mpn} onChange={(e) => set("mpn", e.target.value)} />
           </Field>
-          <Field label="Warranty" htmlFor="warranty" hint="Shown on the product page, e.g. 1 year brand warranty">
+          <Field label="Warranty" htmlFor="warranty" hint="Shown on the product page, e.g. 1 year brand warranty" aside={<AiTag origin={origin("warranty")} />}>
             <Input id="warranty" value={v.warranty} onChange={(e) => set("warranty", e.target.value)} />
           </Field>
           <Field label="Status" htmlFor="status">
@@ -558,10 +792,17 @@ export function ProductForm({
         </div>
         <ul className="mt-4 space-y-2">
           {v.specs.map((s, i) => (
-            <li key={i} className="grid gap-2 sm:grid-cols-[160px_200px_1fr_auto]">
+            <li key={i} className="grid gap-2 sm:grid-cols-[160px_200px_1fr_auto_auto]">
               <input className="h-10 rounded-md border border-line-strong px-2.5 text-sm" placeholder="Group (Display)" value={s.group_name} onChange={(e) => set("specs", v.specs.map((x, n) => (n === i ? { ...x, group_name: e.target.value } : x)))} aria-label={`Spec ${i + 1} group`} />
               <input className="h-10 rounded-md border border-line-strong px-2.5 text-sm" placeholder="Name (Size)" value={s.name} onChange={(e) => set("specs", v.specs.map((x, n) => (n === i ? { ...x, name: e.target.value } : x)))} aria-label={`Spec ${i + 1} name`} />
               <input className="h-10 rounded-md border border-line-strong px-2.5 text-sm" placeholder="Value (6.7 inch)" value={s.value} onChange={(e) => set("specs", v.specs.map((x, n) => (n === i ? { ...x, value: e.target.value } : x)))} aria-label={`Spec ${i + 1} value`} />
+              <span className="flex w-24 items-center">
+                {isProtectedSpec(s.name) ? <span className="text-xs text-ink-mute">Set by you</span> : specOrigin(s, ai) === "ai" ? (
+                  <span title={specStatus(s.name)}>
+                    <AiTag origin="ai" /> <span className="text-xs text-ink-mute">{specStatus(s.name) === "VERIFIED" ? "verified" : "likely"}</span>
+                  </span>
+                ) : null}
+              </span>
               <div className="flex">
                 <button type="button" className="rounded p-2 hover:bg-paper disabled:opacity-30" disabled={i === 0} onClick={() => { const s2 = [...v.specs]; [s2[i - 1], s2[i]] = [s2[i], s2[i - 1]]; set("specs", s2); }} aria-label="Move up">
                   <ArrowUp className="h-4 w-4" />
@@ -579,7 +820,9 @@ export function ProductForm({
         </Button>
         <p className="mt-2 text-xs text-ink-mute">Rows with an empty name or value are skipped when saving.</p>
 
-        <h3 className="mt-8 font-semibold">Key features</h3>
+        <h3 className="mt-8 flex items-center gap-2 font-semibold">
+          Key features <AiTag origin={origin("features")} />
+        </h3>
         <p className="text-sm text-ink-soft">Short highlights shown with a tick, e.g. “IP68 water resistance”.</p>
         <ul className="mt-3 space-y-2">
           {v.features.map((f, i) => (
@@ -599,11 +842,11 @@ export function ProductForm({
 
       {/* ------------------------------------------------------ Description */}
       <section role="tabpanel" aria-label="Description" className={panel("Description")}>
-        <Field label="Short description" htmlFor="short_description" hint="One or two lines under the product name (max 500 characters)">
+        <Field label="Short description" htmlFor="short_description" hint="One or two lines under the product name (max 500 characters)" aside={<AiTag origin={origin("short_description")} />}>
           <Textarea id="short_description" rows={2} maxLength={500} value={v.short_description} onChange={(e) => set("short_description", e.target.value)} />
         </Field>
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          <Field label="Full description" htmlFor="description" hint="Formatting: ## Heading, - bullet, **bold**, [link](https://…). Blank line = new paragraph.">
+          <Field label="Full description" htmlFor="description" hint="Formatting: ## Heading, - bullet, **bold**, [link](https://…). Blank line = new paragraph." aside={<AiTag origin={origin("description")} />}>
             <Textarea id="description" rows={16} value={v.description} onChange={(e) => set("description", e.target.value)} className="font-mono text-sm" />
           </Field>
           <div>
@@ -624,6 +867,7 @@ export function ProductForm({
           <Field
             label="URL slug"
             htmlFor="slug"
+            aside={<AiTag origin={origin("slug")} />}
             hint={isNew ? `Automatic: /products/${slugify(v.name) || "product-name"}` : "Changing it keeps the old URL working with an automatic redirect."}
           >
             <div className="flex items-center rounded-[var(--radius-control)] border border-line-strong bg-paper">
@@ -631,10 +875,10 @@ export function ProductForm({
               <input id="slug" className="h-11 flex-1 rounded-r-[var(--radius-control)] bg-surface px-2 text-[15px]" value={v.slug} placeholder={slugify(v.name)} onChange={(e) => set("slug", slugify(e.target.value))} />
             </div>
           </Field>
-          <Field label={`Meta title (${(v.meta_title || autoTitle).length}/60 recommended)`} htmlFor="meta_title" error={errors.meta_title}>
+          <Field label={`Meta title (${(v.meta_title || autoTitle).length}/60 recommended)`} htmlFor="meta_title" error={errors.meta_title} aside={<AiTag origin={origin("meta_title")} />}>
             <Input id="meta_title" value={v.meta_title} placeholder={autoTitle} maxLength={120} onChange={(e) => set("meta_title", e.target.value)} />
           </Field>
-          <Field label={`Meta description (${(v.meta_description || autoDescription).length}/160 recommended)`} htmlFor="meta_description" error={errors.meta_description}>
+          <Field label={`Meta description (${(v.meta_description || autoDescription).length}/160 recommended)`} htmlFor="meta_description" error={errors.meta_description} aside={<AiTag origin={origin("meta_description")} />}>
             <Textarea id="meta_description" rows={3} value={v.meta_description} placeholder={autoDescription} maxLength={320} onChange={(e) => set("meta_description", e.target.value)} />
           </Field>
           <Field label="Canonical URL (advanced)" htmlFor="canonical_url" error={errors.canonical_url} hint="Only if this page duplicates another URL. Usually leave empty.">

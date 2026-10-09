@@ -100,8 +100,15 @@ Do **not** add a "Cache Everything" cache rule: the Worker already caches public
 ## 5. Supabase dashboard
 
 **Database migrations (Homepage Management, AI, stock import):** SQL Editor → run
-`supabase/migrations/20261009000010_homepage_ai_sync.sql`, then `20261009000011_ai_staff_access.sql`, once each. Until then the homepage keeps its built-in layout
-and the new admin pages show a "run the migration" notice; nothing else is affected.
+`supabase/migrations/20261009000010_homepage_ai_sync.sql`, then `20261009000011_ai_staff_access.sql`, then
+`20261009000012_ai_product_completion.sql` (Complete with AI in the product form), once each, in that order. Until then the homepage keeps its
+built-in layout and the new admin pages show a "run the migration" notice; nothing else is affected.
+
+**AI in the product form:** Admin → Products → New product. Enter the product name, selling price, RAM and ROM, then **Complete with AI**.
+The product is saved as a hidden **Draft** first, AI fills the other fields for review (marked "AI"), and nothing is published until you
+press **Save & publish** yourself. AI never receives or changes the price, discount, EMI, cost, stock, images or the RAM/ROM you typed.
+Models are managed in Admin → Settings → AI (no Cloudflare settings). **Test connection** checks the key, the model and a real generation
+request separately and shows the provider's own error.
 
 
 Authentication → **URL Configuration**:

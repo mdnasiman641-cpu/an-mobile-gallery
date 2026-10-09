@@ -36,6 +36,7 @@ export function Field({
   hint,
   required,
   className,
+  aside,
   children,
 }: {
   label: string;
@@ -44,6 +45,8 @@ export function Field({
   hint?: string;
   required?: boolean;
   className?: string;
+  /** Small extra content after the label (e.g. an "AI" tag). */
+  aside?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -56,6 +59,7 @@ export function Field({
             *
           </span>
         ) : null}
+        {aside ? <span className="ml-2 inline-flex align-middle">{aside}</span> : null}
       </label>
       {children}
       {error ? (

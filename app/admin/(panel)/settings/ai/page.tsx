@@ -80,6 +80,7 @@ export default async function AiSettingsPage() {
       totalRequests: (h.total_requests as number) ?? 0,
       successfulRequests: (h.successful_requests as number) ?? 0,
       failedRequests: (h.failed_requests as number) ?? 0,
+      consecutiveFailures: (h.consecutive_failures as number) ?? 0,
     };
   });
 

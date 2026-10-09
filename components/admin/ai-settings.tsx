@@ -21,6 +21,8 @@ import { Checkbox, Field, Input, Select } from "@/components/ui/form";
 import { Badge } from "@/components/ui/misc";
 import { DEFAULT_BASE_URL } from "@/lib/ai/providers";
 import type { DiscoveredModel } from "@/lib/ai/model-discovery";
+import type { DiagnosticStep } from "@/lib/ai/diagnostics";
+import { cn } from "@/lib/utils";
 import { AI_CAPABILITIES, CAPABILITY_LABELS, ROUTING_LABELS, ROUTING_STRATEGIES, type AiCapability, type ProviderType, type RoutingStrategy } from "@/lib/ai/types";
 
 export interface ModelRowView extends ModelHealthView {
@@ -35,6 +37,7 @@ export interface ModelRowView extends ModelHealthView {
   costOut: number | null;
   qualityScore: number | null;
   capabilities: AiCapability[];
+  consecutiveFailures: number;
 }
 
 const PROVIDER_LABEL: Record<ProviderType, string> = { gemini: "Google Gemini", openai: "OpenAI", openai_compatible: "Custom OpenAI-compatible" };
@@ -124,6 +127,7 @@ export function AiSettingsManager({
   const [maxAttempts, setMaxAttempts] = useState(s(routing.max_attempts));
   const [pending, start] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [tests, setTests] = useState<Record<string, DiagnosticStep[]>>({});
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((p) => ({ ...p, [k]: v }));
 
   const run = (id: string | null, fn: () => Promise<Parameters<typeof toastResult>[0]>) => {
@@ -134,6 +138,18 @@ export function AiSettingsManager({
       router.refresh();
     });
   };
+
+  function test(id: string) {
+    setBusyId(id);
+    start(async () => {
+      const res = await testAiModelAction(id);
+      toastResult(res);
+      const steps = res.data?.steps;
+      if (steps) setTests((prev) => ({ ...prev, [id]: steps }));
+      setBusyId(null);
+      router.refresh();
+    });
+  }
 
   function openNew() {
     setF(blank((models.reduce((m, x) => Math.max(m, x.priority), 0) || 0) + 10));
@@ -266,6 +282,16 @@ export function AiSettingsManager({
                         <dt className="inline text-ink-mute">Success rate </dt>
                         <dd className="inline">{successRate(m)}</dd>
                       </div>
+                      <div>
+                        <dt className="inline text-ink-mute">OK / failed </dt>
+                        <dd className="inline">
+                          {m.successfulRequests} / {m.failedRequests}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="inline text-ink-mute">Failures in a row </dt>
+                        <dd className="inline">{m.consecutiveFailures}</dd>
+                      </div>
                     </dl>
                     {m.lastErrorCode ? (
                       <p className="mt-1 text-xs text-deal">
@@ -273,9 +299,23 @@ export function AiSettingsManager({
                         {m.lastErrorMessage ? `: ${m.lastErrorMessage}` : ""}
                       </p>
                     ) : null}
+                    {tests[m.id] ? (
+                      <ul className="mt-2 space-y-1 rounded-lg bg-paper p-2.5 text-xs" aria-label={`Test results for ${m.displayName}`}>
+                        {tests[m.id].map((st) => (
+                          <li key={st.key} className="flex gap-2">
+                            <span className={cn("w-16 shrink-0 font-semibold", st.ok === true ? "text-signal" : st.ok === false ? "text-deal" : "text-ink-mute")}>
+                              {st.ok === true ? "✓ OK" : st.ok === false ? "✕ Failed" : "– Skipped"}
+                            </span>
+                            <span>
+                              <strong>{st.label}:</strong> {st.detail}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap gap-1.5">
-                    <Button variant="outline" size="sm" disabled={readOnly || pending} loading={busyId === m.id && pending} onClick={() => run(m.id, () => testAiModelAction(m.id))}>
+                    <Button variant="outline" size="sm" disabled={readOnly || pending} loading={busyId === m.id && pending} onClick={() => test(m.id)}>
                       Test connection
                     </Button>
                     <Button variant="outline" size="sm" disabled={readOnly} onClick={() => { setF(fromRow(m)); setEditing(m.id); }}>

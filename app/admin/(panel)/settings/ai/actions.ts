@@ -5,7 +5,8 @@ import { z } from "zod";
 import { assertStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { encryptSecret, encryptionAvailable, keyHint } from "@/lib/ai/crypto";
-import { AiSetupError, resetModelHealth, runAi } from "@/lib/ai/engine";
+import { AiSetupError, getModelConfig, resetModelHealth, runAi } from "@/lib/ai/engine";
+import { checkKeyAndModel, checkResearch, diagnosticStep, type DiagnosticStep } from "@/lib/ai/diagnostics";
 import { sanitizeMessage } from "@/lib/ai/errors";
 import { AI_CAPABILITIES, PROVIDER_TYPES, ROUTING_STRATEGIES } from "@/lib/ai/types";
 import { AiProviderError } from "@/lib/ai/errors";
@@ -124,20 +125,34 @@ export async function moveAiModelAction(id: string, direction: "up" | "down"): P
   return { ok: true, message: "Priority updated" };
 }
 
-export async function testAiModelAction(id: string): Promise<ActionResult> {
+export async function testAiModelAction(id: string): Promise<ActionResult<{ steps: DiagnosticStep[] }>> {
   const session = await assertStaff("admin");
   if ("error" in session) return { ok: false, message: session.error };
   if (!uuid.safeParse(id).success) return { ok: false, message: "Invalid model." };
   try {
-    const started = Date.now();
-    const res = await runAi(
-      { task: "test", system: "You are a connection test.", prompt: "Reply with the single word OK.", json: false, maxOutputTokens: 16 },
-      { onlyModelId: id },
-    );
+    const model = await getModelConfig(id);
+    if (!model) return { ok: false, message: "Model not found." };
+    // 1 + 2: key accepted? model accessible? (no generation request, no health change)
+    const steps = await checkKeyAndModel(model);
+    if (steps[0].ok === false) {
+      steps.push(diagnosticStep("generate", null, "Skipped: the API key was rejected."));
+    } else {
+      // 3: the real generation request (recorded in model health)
+      const started = Date.now();
+      const res = await runAi({ task: "test", system: "You are a connection test.", prompt: "Reply with the single word OK.", json: false }, { onlyModelId: id });
+      if (res.ok) {
+        steps.push(diagnosticStep("generate", true, `Succeeded in ${((Date.now() - started) / 1000).toFixed(1)}s. Reply: “${sanitizeMessage(res.response.text, [model.apiKey]).slice(0, 40)}”`));
+        if (model.capabilities.includes("research")) steps.push(await checkResearch(model));
+      } else {
+        const last = [...res.attempts].reverse().find((a) => a.status === "failed");
+        const label = last ? `${last.errorCode}${last.httpStatus ? ` (${last.httpStatus})` : ""}` : res.code;
+        steps.push(diagnosticStep("generate", false, `Failed. ${label}: ${last?.message ?? res.message}`));
+      }
+    }
     revalidatePath(PATH);
-    if (res.ok) return { ok: true, message: `Connected in ${((Date.now() - started) / 1000).toFixed(1)}s. Reply: “${sanitizeMessage(res.response.text).slice(0, 40)}”` };
-    const last = res.attempts[res.attempts.length - 1];
-    return { ok: false, message: last ? `${last.errorCode}${last.httpStatus ? ` (${last.httpStatus})` : ""}: ${last.message ?? ""}` : res.message };
+    const ok = steps.every((st) => st.ok !== false);
+    const summary = steps.map((st) => `${st.label}: ${st.ok === true ? "OK" : st.ok === false ? "FAILED" : "not checked"}`).join(" · ");
+    return { ok, message: ok ? `Connection OK. ${summary}` : `Problem found. ${summary}`, data: { steps } };
   } catch (e) {
     return { ok: false, message: e instanceof AiSetupError ? e.message : "Test failed." };
   }

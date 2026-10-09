@@ -5,8 +5,8 @@ import { emptyHealth, runWithFailover, type RouterDeps } from "@/lib/ai/router";
 import type { AiCapability, AiModelConfig, AiModelHealth, AiRequest, AiResponse, AttemptRecord, FailoverResult, ProviderType, RoutingStrategy } from "@/lib/ai/types";
 
 /**
- * Server-only entry point. Reads model configs with the service role (the
- * only role allowed to read the encrypted API keys), decrypts keys in memory,
+ * Server-only entry point. Reads model configs (staff session, or the service
+ * role for background imports), decrypts keys in memory,
  * runs the request with failover, then saves model health and the attempt log
  * in one write each.
  */
@@ -175,6 +175,12 @@ export async function runAi(
   const { touched, ...rest } = result;
   await persist(touched, result.attempts, opts.jobId ?? null);
   return rest as FailoverResult;
+}
+
+/** One model with its key decrypted (server only; used by Test connection). */
+export async function getModelConfig(modelId: string): Promise<AiModelConfig | null> {
+  const deps = await loadDeps();
+  return deps.models.find((m) => m.id === modelId) ?? null;
 }
 
 /** Clear a model's cooldown and failure counters (Admin → Reset health). */

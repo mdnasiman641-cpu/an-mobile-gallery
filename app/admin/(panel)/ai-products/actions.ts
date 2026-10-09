@@ -40,10 +40,13 @@ export async function retryAiJobAction(jobId: string): Promise<ActionResult> {
   if (!uuid.safeParse(jobId).success) return { ok: false, message: "Invalid job." };
   const supabase = await createClient();
   const { data } = await supabase.from("ai_jobs").select("product_id, task_type, replace_manual").eq("id", jobId).maybeSingle();
-  const job = data as { product_id: string; task_type: ContentTask; replace_manual: boolean } | null;
+  const job = data as { product_id: string; task_type: ContentTask | "complete"; replace_manual: boolean } | null;
   if (!job) return { ok: false, message: "Job not found." };
+  // "Complete with AI" fills the product form for review; it is re-run from the product page, not here.
+  if (job.task_type === "complete") return { ok: false, message: "Open the product and click “Complete with AI” again." };
   try {
-    const { jobId: next } = await enqueueAiJob(job.product_id, job.task_type, { replaceManual: job.replace_manual, trigger: "retry", requestedBy: session.userId });
+    const task: ContentTask = job.task_type;
+    const { jobId: next } = await enqueueAiJob(job.product_id, task, { replaceManual: job.replace_manual, trigger: "retry", requestedBy: session.userId });
     const res = await processAiJob(next);
     revalidatePath("/admin/ai-products");
     return { ok: res.ok, message: res.message };

@@ -122,6 +122,8 @@ export interface AiRequest {
   /** Public image URLs (only sent to vision-capable models). */
   imageUrls?: string[];
   maxOutputTokens?: number;
+  /** Long answers (e.g. a full product listing) get at least this long, whatever the model's timeout. */
+  minTimeoutMs?: number;
 }
 
 export interface AiSource {
@@ -147,6 +149,31 @@ export type AiErrorCode =
   | "LOCAL_LIMIT"
   | "COOLDOWN"
   | "NO_KEY";
+
+/**
+ * Why a provider refused access (401 / 403, or Gemini's 400 API_KEY_INVALID).
+ * Key-wide reasons apply to every model that uses the same key.
+ */
+export const AUTH_REASONS = [
+  "INVALID_KEY",
+  "API_NOT_ENABLED",
+  "KEY_RESTRICTED",
+  "PROJECT_DENIED",
+  "MODEL_DENIED",
+  "REGION_NOT_SUPPORTED",
+  "ACCESS_DENIED",
+] as const;
+export type AuthReason = (typeof AUTH_REASONS)[number];
+
+export const AUTH_REASON_LABELS: Record<AuthReason, string> = {
+  INVALID_KEY: "API key rejected (invalid, expired or deleted)",
+  API_NOT_ENABLED: "The API is not enabled for this key's project",
+  KEY_RESTRICTED: "The key's restrictions block this API",
+  PROJECT_DENIED: "The provider denied this project access",
+  MODEL_DENIED: "This key has no access to this model",
+  REGION_NOT_SUPPORTED: "The provider doesn't serve requests from this location",
+  ACCESS_DENIED: "Access denied by the provider",
+};
 
 export interface AttemptRecord {
   attempt: number;

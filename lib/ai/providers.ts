@@ -20,10 +20,12 @@ async function postJson(
   body: unknown,
   model: AiModelConfig,
   fetchImpl: FetchLike,
+  minTimeoutMs = 0,
 ): Promise<unknown> {
   const secrets = model.apiKey ? [model.apiKey] : [];
+  const timeoutMs = Math.max(model.timeoutMs, minTimeoutMs);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), model.timeoutMs);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
   try {
     res = await fetchImpl(url, {
@@ -33,7 +35,7 @@ async function postJson(
       signal: controller.signal,
     });
   } catch (e) {
-    if (controller.signal.aborted) throw new AiProviderError("TIMEOUT", `No response within ${Math.round(model.timeoutMs / 1000)}s`);
+    if (controller.signal.aborted) throw new AiProviderError("TIMEOUT", `No response within ${Math.round(timeoutMs / 1000)}s`);
     throw new AiProviderError("NETWORK_ERROR", sanitizeMessage(e, secrets));
   } finally {
     clearTimeout(timer);
@@ -45,6 +47,16 @@ async function postJson(
   } catch {
     throw new AiProviderError("INVALID_RESPONSE", "The provider returned a response that is not JSON", res.status);
   }
+}
+
+/**
+ * Resource path of a Gemini model: "models/gemini-2.5-flash", or
+ * "tunedModels/xyz" for tuned models. The exact id from the model list is used.
+ */
+export function geminiModelPath(modelName: string): string {
+  const name = modelName.trim().replace(/^models\//, "");
+  if (name.startsWith("tunedModels/")) return `tunedModels/${encodeURIComponent(name.slice("tunedModels/".length))}`;
+  return `models/${encodeURIComponent(name)}`;
 }
 
 async function callGemini(model: AiModelConfig, req: AiRequest, fetchImpl: FetchLike): Promise<AiResponse> {
@@ -62,7 +74,7 @@ async function callGemini(model: AiModelConfig, req: AiRequest, fetchImpl: Fetch
     },
     ...(research ? { tools: [{ google_search: {} }] } : {}),
   };
-  const data = (await postJson(`${base}/models/${encodeURIComponent(name)}:generateContent`, { "x-goog-api-key": model.apiKey ?? "" }, body, model, fetchImpl)) as {
+  const data = (await postJson(`${base}/${geminiModelPath(name)}:generateContent`, { "x-goog-api-key": model.apiKey ?? "" }, body, model, fetchImpl, req.minTimeoutMs)) as {
     candidates?: {
       content?: { parts?: { text?: string }[] };
       finishReason?: string;
@@ -96,7 +108,7 @@ async function callOpenAiStyle(model: AiModelConfig, req: AiRequest, fetchImpl: 
     // Search models don't accept response_format; ask for JSON in the prompt instead.
     ...(req.json && !research ? { response_format: { type: "json_object" } } : {}),
   };
-  const data = (await postJson(`${base}/chat/completions`, { authorization: `Bearer ${model.apiKey ?? ""}` }, body, model, fetchImpl)) as {
+  const data = (await postJson(`${base}/chat/completions`, { authorization: `Bearer ${model.apiKey ?? ""}` }, body, model, fetchImpl, req.minTimeoutMs)) as {
     choices?: { message?: { content?: string | null; annotations?: { type?: string; url_citation?: { url?: string; title?: string } }[] } }[];
   };
   const msg = data.choices?.[0]?.message;
