@@ -8,6 +8,7 @@ import { RichText } from "@/components/ui/rich-text";
 import { JsonLd } from "@/components/seo/json-ld";
 import { breadcrumbJsonLd } from "@/lib/jsonld";
 import { buildMetadata, taxonomySeoDescription, taxonomySeoTitle } from "@/lib/seo";
+import { withSiteDefaults } from "@/lib/page-metadata";
 import { hasActiveFilters, parseListingParams, type RawSearchParams } from "@/lib/listing";
 
 /**
@@ -23,15 +24,15 @@ function pageNumber(sp: RawSearchParams): number {
   return Math.max(1, Number(raw) || 1);
 }
 
-function listingMeta(base: { title: string; description: string; path: string; image?: string | null }, sp: RawSearchParams): Metadata {
+function listingMeta(base: { title: string; description: string; path: string; image?: string | null }, sp: RawSearchParams): Promise<Metadata> {
   const page = pageNumber(sp);
-  return buildMetadata({
+  return withSiteDefaults(buildMetadata({
     title: page > 1 ? `${base.title} — Page ${page}` : base.title,
     description: base.description,
     path: page > 1 ? `${base.path}?page=${page}` : base.path,
     image: base.image,
     noIndex: hasActiveFilters(sp),
-  });
+  }));
 }
 
 // ---------------------------------------------------------------- /products
@@ -44,7 +45,7 @@ const FLAG_TITLES: Record<string, string> = {
   used: "Used & refurbished phones",
 };
 
-export function productsMetadata(sp: RawSearchParams): Metadata {
+export function productsMetadata(sp: RawSearchParams): Promise<Metadata> {
   return listingMeta(
     {
       title: "All Mobile Phones Price in Bangladesh",
@@ -74,7 +75,7 @@ export async function ProductsView({ sp }: { sp: RawSearchParams }) {
 
 // ------------------------------------------------------------------ /offers
 
-export function offersMetadata(sp: RawSearchParams): Metadata {
+export function offersMetadata(sp: RawSearchParams): Promise<Metadata> {
   return listingMeta(
     {
       title: "Mobile Phone Offers & Discounts in Bangladesh",

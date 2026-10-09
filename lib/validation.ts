@@ -150,6 +150,8 @@ export const couponSchema = z
   });
 
 export const checkoutSchema = z.object({
+  /** One random id per checkout attempt: a retry never creates a second order. */
+  request_id: z.string().uuid().optional(),
   customer_name: z.string().trim().min(2, "Enter your full name").max(100),
   phone: bdPhone,
   email: z
@@ -170,7 +172,8 @@ export const checkoutSchema = z.object({
         product_id: z.string().uuid(),
         variant_id: z.string().uuid().nullable(),
         quantity: z.number().int().min(1).max(10),
-        slug: z.string().optional(),
+        // only used to refresh that product's cached page; must look like a slug
+        slug: z.string().max(200).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).optional().catch(undefined),
       }),
     )
     .min(1, "Your cart is empty")

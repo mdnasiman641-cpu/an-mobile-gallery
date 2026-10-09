@@ -5,14 +5,17 @@ import { Breadcrumbs, EmptyState } from "@/components/ui/misc";
 import { JsonLd } from "@/components/seo/json-ld";
 import { breadcrumbJsonLd } from "@/lib/jsonld";
 import { buildMetadata } from "@/lib/seo";
+import { withSiteDefaults } from "@/lib/page-metadata";
 
 export const revalidate = 3600;
 
-export const metadata: Metadata = buildMetadata({
+export async function generateMetadata(): Promise<Metadata> {
+  return withSiteDefaults(buildMetadata({
   title: "Shop by Category",
   description: "Smartphones, iPhones, Android phones, used phones, feature phones and accessories with prices in Bangladesh.",
   path: "/categories",
-});
+  }));
+}
 
 export default async function CategoriesPage() {
   const tree = buildCategoryTree(await getCategories());

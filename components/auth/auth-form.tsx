@@ -7,10 +7,21 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/form";
 import { bdPhone } from "@/lib/validation";
 
-/** Only allow same-site relative redirects (prevents open-redirect abuse). */
+/**
+ * Only allow same-site relative redirects (prevents open-redirect abuse).
+ * Browsers drop tabs/newlines and treat "\\" like "/", so "/\t/evil.com" or
+ * "/\\evil.com" would leave the site: resolve the URL and require our origin.
+ */
 export function safeNext(next: string | null | undefined, fallback: string): string {
-  if (!next || !next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return fallback;
-  return next;
+  if (!next || !next.startsWith("/") || /[\u0000-\u001f\\]/.test(next)) return fallback;
+  try {
+    const base = "https://same-origin.invalid";
+    const url = new URL(next, base);
+    if (url.origin !== base) return fallback;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return fallback;
+  }
 }
 
 export function AuthForm({

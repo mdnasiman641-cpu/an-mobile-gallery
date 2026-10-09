@@ -395,6 +395,7 @@ export const getProductsForCompare = unstable_cache(
 // Sitemap / feeds (paged to handle thousands of products)
 // ---------------------------------------------------------------------------
 
+/** Products for the sitemap: indexable ones only (a product whose canonical points elsewhere is left out). */
 export async function getAllProductsForSitemap(): Promise<{ slug: string; updated_at: string }[]> {
   const supabase = getPublicClient();
   if (!supabase) return [];
@@ -403,14 +404,18 @@ export async function getAllProductsForSitemap(): Promise<{ slug: string; update
   for (let from = 0; from < 50000; from += pageSize) {
     const { data, error } = await supabase
       .from("products")
-      .select("slug, updated_at")
+      .select("slug, updated_at, canonical_url")
       .in("status", ["active", "out_of_stock"])
       .eq("is_demo", false) // sample data is never submitted to search engines
       .order("created_at", { ascending: true })
       .range(from, from + pageSize - 1);
     if (error) fail("sitemap products", error.message);
-    const rows = (data as { slug: string; updated_at: string }[]) ?? [];
-    out.push(...rows);
+    const rows = (data as { slug: string; updated_at: string; canonical_url: string | null }[]) ?? [];
+    for (const r of rows) {
+      const canonical = r.canonical_url?.trim();
+      if (canonical && !canonical.replace(/\/+$/, "").endsWith(`/products/${r.slug}`)) continue;
+      out.push({ slug: r.slug, updated_at: r.updated_at });
+    }
     if (rows.length < pageSize) break;
   }
   return out;

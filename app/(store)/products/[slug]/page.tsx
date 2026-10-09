@@ -25,6 +25,7 @@ import { breadcrumbJsonLd, productJsonLd } from "@/lib/jsonld";
 import { absoluteUrl, buildMetadata, productSeoDescription, productSeoTitle } from "@/lib/seo";
 import { conditionLabel, formatDate, formatPrice } from "@/lib/utils";
 import type { ProductSpecification } from "@/types";
+import { withSiteDefaults } from "@/lib/page-metadata";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -54,7 +55,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     noIndex: product.is_demo,
   });
   if (product.canonical_url) meta.alternates = { canonical: product.canonical_url };
-  return meta;
+  return withSiteDefaults(meta);
 }
 
 function groupSpecs(specs: ProductSpecification[]) {

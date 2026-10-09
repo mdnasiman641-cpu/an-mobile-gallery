@@ -30,21 +30,24 @@ function money(n: number): string {
   return Number(n).toFixed(2);
 }
 
+/**
+ * Delivery charge for Bangladesh, from the store settings. One shipping rate
+ * applies to the whole country in schema.org terms, so the HIGHER of the two
+ * zone charges is used (the price never looks lower than what a customer
+ * outside Dhaka pays). Delivery times are not stated: the store has no
+ * setting for them, and invented values must not be published.
+ */
 function shippingDetails(settings: SiteSettings | null): JsonLd | undefined {
   if (!settings) return undefined;
+  const rate = Math.max(Number(settings.delivery_charge_inside_dhaka) || 0, Number(settings.delivery_charge_outside_dhaka) || 0);
   return {
     "@type": "OfferShippingDetails",
     shippingRate: {
       "@type": "MonetaryAmount",
-      value: money(settings.delivery_charge_inside_dhaka),
+      value: money(rate),
       currency: settings.currency || "BDT",
     },
     shippingDestination: { "@type": "DefinedRegion", addressCountry: "BD" },
-    deliveryTime: {
-      "@type": "ShippingDeliveryTime",
-      handlingTime: { "@type": "QuantitativeValue", minValue: 0, maxValue: 1, unitCode: "DAY" },
-      transitTime: { "@type": "QuantitativeValue", minValue: 1, maxValue: 5, unitCode: "DAY" },
-    },
   };
 }
 
@@ -55,7 +58,6 @@ function returnPolicy(settings: SiteSettings | null): JsonLd | undefined {
     applicableCountry: "BD",
     returnPolicyCategory: "https://schema.org/MerchantReturnFiniteReturnWindow",
     merchantReturnDays: settings.return_days,
-    returnMethod: "https://schema.org/ReturnInStore",
   };
 }
 
@@ -122,7 +124,7 @@ export function productJsonLd(
     name: product.name,
     url: opts.url,
     description: toPlainText(product.short_description || product.description, 5000) || product.name,
-    image: product.images.map((i) => absoluteImageUrl(i.url)).filter(Boolean),
+    ...(product.images.length ? { image: product.images.map((i) => absoluteImageUrl(i.url)).filter(Boolean) } : {}),
     itemCondition: CONDITION[product.condition],
     ...(product.sku ? { sku: product.sku } : {}),
     ...(product.mpn ? { mpn: product.mpn } : {}),

@@ -42,7 +42,7 @@ export function Logo({
     );
   }
   return (
-    <span className="flex items-center gap-2.5">
+    <span className="flex min-w-0 items-center gap-2.5">
       <span
         aria-hidden
         className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand to-signal text-[15px] font-extrabold tracking-tight text-white shadow-[inset_0_-2px_0_rgb(0_0_0/0.12)] lg:h-11 lg:w-11"
@@ -119,11 +119,11 @@ export async function StoreHeader() {
             storeName={settings.store_name}
             phone={settings.phone}
           />
-          <Link href="/" className="mr-auto min-w-0 shrink-0 lg:mr-0" aria-label={`${settings.store_name} home`}>
+          <Link href="/" className="mr-auto min-w-0 lg:mr-0 lg:shrink-0" aria-label={`${settings.store_name} home`}>
             <Logo name={settings.store_name} logoUrl={settings.logo_url} subline={STORE_SERVICES} />
           </Link>
           <SearchBox className="hidden max-w-2xl flex-1 md:block" size="lg" />
-          <nav aria-label="Shortcuts" className="flex items-center gap-0.5 md:ml-auto lg:gap-1.5">
+          <nav aria-label="Shortcuts" className="flex shrink-0 items-center gap-0.5 md:ml-auto lg:gap-1.5">
             <CompareLink />
             <AccountLink />
             <CartLink />
@@ -233,7 +233,7 @@ export async function StoreHeader() {
           </ul>
           <Link
             href="/compare"
-            className="ml-3 hidden h-9 shrink-0 items-center gap-2 rounded-full border border-white/35 px-4 text-[13px] font-semibold text-white hover:border-white hover:bg-white/10 lg:inline-flex"
+            className="ml-3 hidden h-9 shrink-0 items-center gap-2 rounded-full border border-white/35 px-4 text-[13px] font-semibold text-white hover:border-white hover:bg-white/10 xl:inline-flex"
           >
             <GitCompareArrows className="h-4 w-4" aria-hidden />
             Compare phones

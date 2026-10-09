@@ -7,14 +7,17 @@ import { JsonLd } from "@/components/seo/json-ld";
 import { breadcrumbJsonLd } from "@/lib/jsonld";
 import { buildMetadata } from "@/lib/seo";
 import { isSvg } from "@/lib/utils";
+import { withSiteDefaults } from "@/lib/page-metadata";
 
 export const revalidate = 3600;
 
-export const metadata: Metadata = buildMetadata({
+export async function generateMetadata(): Promise<Metadata> {
+  return withSiteDefaults(buildMetadata({
   title: "Mobile Phone Brands in Bangladesh",
   description: "Shop phones by brand: Apple, Samsung, Xiaomi, OnePlus, Realme, Oppo, Vivo and more, with current prices in Bangladesh.",
   path: "/brands",
-});
+  }));
+}
 
 export default async function BrandsPage() {
   const brands = await getBrands();

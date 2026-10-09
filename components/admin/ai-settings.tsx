@@ -187,7 +187,7 @@ export function AiSettingsManager({
         >
           <p className="text-xs font-medium text-ink-mute">Routing</p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <Select aria-label="Routing strategy" className="h-9 flex-1" value={strategy} onChange={(e) => setStrategy(e.target.value as RoutingStrategy)} disabled={readOnly}>
+            <Select aria-label="Routing strategy" className="h-9 min-w-[9.5rem] flex-1" value={strategy} onChange={(e) => setStrategy(e.target.value as RoutingStrategy)} disabled={readOnly}>
               {ROUTING_STRATEGIES.map((r) => (
                 <option key={r} value={r}>
                   {ROUTING_LABELS[r]}

@@ -101,7 +101,9 @@ Do **not** add a "Cache Everything" cache rule: the Worker already caches public
 
 **Database migrations (Homepage Management, AI, stock import):** SQL Editor → run
 `supabase/migrations/20261009000010_homepage_ai_sync.sql`, then `20261009000011_ai_staff_access.sql`, then
-`20261009000012_ai_product_completion.sql` (Complete with AI in the product form), once each, in that order. Until then the homepage keeps its
+`20261009000012_ai_product_completion.sql` (Complete with AI in the product form), then
+`20261010000013_security_order_integrity.sql` (security and duplicate-order fixes; required by the current code for order pages,
+adding staff and checkout), once each, in that order. Until then the homepage keeps its
 built-in layout and the new admin pages show a "run the migration" notice; nothing else is affected.
 
 **AI in the product form:** Admin → Products → New product. Enter the product name, selling price, RAM and ROM, then **Complete with AI**.

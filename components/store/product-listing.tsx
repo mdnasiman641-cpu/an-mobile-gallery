@@ -40,11 +40,11 @@ export async function ProductListing({
         <FilterSidebar options={options} hideBrand={hideBrandFilter} basePath={pathname} />
       </Suspense>
       <div className="min-w-0 flex-1">
-        <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <p className="text-sm text-ink-soft" aria-live="polite">
             {result.total === 1 ? "1 product" : `${result.total.toLocaleString("en-IN")} products`}
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             <Suspense fallback={null}>
               <MobileFilterButton options={options} hideBrand={hideBrandFilter} basePath={pathname} />
               <SortSelect showRelevance={Boolean(query.query)} basePath={pathname} />

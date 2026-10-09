@@ -6,16 +6,17 @@ import { RichText } from "@/components/ui/rich-text";
 import { JsonLd } from "@/components/seo/json-ld";
 import { breadcrumbJsonLd } from "@/lib/jsonld";
 import { buildMetadata } from "@/lib/seo";
+import { withSiteDefaults } from "@/lib/page-metadata";
 
 export const revalidate = 86400;
 
 export async function generateMetadata(): Promise<Metadata> {
   const [page, settings] = await Promise.all([getPage("about"), getSiteSettings()]);
-  return buildMetadata({
+  return withSiteDefaults(buildMetadata({
     title: page?.meta_title || page?.title || `About ${settings.store_name}`,
     description: page?.meta_description || `About ${settings.store_name}: original phones, checked used phones and gadgets in Bangladesh.`,
     path: "/about",
-  });
+  }));
 }
 
 export default async function AboutPage() {

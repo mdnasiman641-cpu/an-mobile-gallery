@@ -8,15 +8,18 @@ import { Breadcrumbs, EmptyState } from "@/components/ui/misc";
 import { ButtonLink } from "@/components/ui/button";
 import { buildMetadata } from "@/lib/seo";
 import { conditionLabel, isSvg } from "@/lib/utils";
+import { withSiteDefaults } from "@/lib/page-metadata";
 
 type Props = { searchParams: Promise<{ ids?: string }> };
 
-export const metadata: Metadata = buildMetadata({
+export async function generateMetadata(): Promise<Metadata> {
+  return withSiteDefaults(buildMetadata({
   title: "Compare Phones",
   description: "Compare prices and specifications of phones side by side.",
   path: "/compare",
   noIndex: true,
-});
+  }));
+}
 
 export default async function ComparePage({ searchParams }: Props) {
   const { ids: rawIds } = await searchParams;

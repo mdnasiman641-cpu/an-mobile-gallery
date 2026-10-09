@@ -4,6 +4,7 @@ import { SearchBox } from "@/components/store/search-box";
 import { Breadcrumbs } from "@/components/ui/misc";
 import { buildMetadata } from "@/lib/seo";
 import { parseListingParams, type RawSearchParams } from "@/lib/listing";
+import { withSiteDefaults } from "@/lib/page-metadata";
 
 type Props = { searchParams: Promise<RawSearchParams> };
 
@@ -12,12 +13,12 @@ type Props = { searchParams: Promise<RawSearchParams> };
 export async function generateMetadata({ searchParams }: Props): Promise<Metadata> {
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q.slice(0, 80) : "";
-  return buildMetadata({
+  return withSiteDefaults(buildMetadata({
     title: q ? `Search results for “${q}”` : "Search",
     description: "Search phones, brands and gadgets.",
     path: "/search",
     noIndex: true,
-  });
+  }));
 }
 
 export default async function SearchPage({ searchParams }: Props) {

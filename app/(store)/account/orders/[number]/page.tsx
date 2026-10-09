@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { Badge } from "@/components/ui/misc";
 import { formatDate, formatPrice, isSvg, orderStatusLabel, orderStatusTone, paymentStatusLabel } from "@/lib/utils";
 import type { Order, OrderItem } from "@/types";
+import { ORDER_COLUMNS } from "@/lib/order-columns";
 
 const STEPS = ["pending", "confirmed", "processing", "shipped", "delivered"] as const;
 
@@ -15,12 +16,13 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
   const supabase = await createClient();
   const { data } = await supabase
     .from("orders")
-    .select("*, order_items(*)")
+    .select(`${ORDER_COLUMNS}, order_items(*)`)
     .eq("order_number", number)
     .eq("user_id", user.id)
     .maybeSingle();
   if (!data) notFound();
-  const order = data as Order & { order_items: OrderItem[] };
+  // admin_note is not selected (staff-only)
+  const order = data as unknown as Omit<Order, "admin_note"> & { order_items: OrderItem[] };
   const stepIndex = STEPS.indexOf(order.status as (typeof STEPS)[number]);
 
   return (

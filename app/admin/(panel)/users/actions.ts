@@ -30,8 +30,11 @@ export async function addStaffAction(input: unknown): Promise<ActionResult> {
   const { email, password, role } = parsed.data;
 
   const supabase = await createClient();
-  const { data: existing } = await supabase.from("users").select("id").eq("email", email).maybeSingle();
-  let userId = (existing as { id: string } | null)?.id ?? null;
+  // Look the account up in Supabase Auth (verified sign-in email), not in the
+  // profile table, whose email column customers could edit.
+  const { data: existing, error: lookupError } = await supabase.rpc("admin_find_user_id_by_email", { p_email: email });
+  if (lookupError) return { ok: false, message: "Couldn't look up the account. Has the latest database migration (0013) been run?" };
+  let userId = (existing as string | null) ?? null;
 
   if (!userId) {
     if (!password || password.length < 10) {

@@ -31,6 +31,7 @@ export async function placeOrderAction(input: unknown): Promise<ActionResult<Ord
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("place_order", {
     p_order: {
+      request_id: d.request_id ?? null,
       customer_name: d.customer_name,
       phone: d.phone,
       email: d.email ?? null,

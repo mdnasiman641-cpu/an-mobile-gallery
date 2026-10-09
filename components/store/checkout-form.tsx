@@ -28,6 +28,15 @@ const ZONES: { value: DeliveryZone; label: string; labelBn: string }[] = [
   { value: "store_pickup", label: "Pick up from shop", labelBn: "দোকান থেকে নেব" },
 ];
 
+function newRequestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 export function CheckoutForm({ deliveryInside, deliveryOutside, freeThreshold, storeName, phone, prefill }: Props) {
   const { items, ready, subtotal, clear, syncItems } = useStore();
   const [priceNotice, setPriceNotice] = useState(false);
@@ -42,6 +51,8 @@ export function CheckoutForm({ deliveryInside, deliveryOutside, freeThreshold, s
     });
   }, [ready, items, syncItems]);
   const [pending, startTransition] = useTransition();
+  const submitting = useRef(false);
+  const requestId = useRef<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [zone, setZone] = useState<DeliveryZone>("inside_dhaka");
@@ -129,8 +140,14 @@ export function CheckoutForm({ deliveryInside, deliveryOutside, freeThreshold, s
   }
 
   function submit(form: FormData) {
+    // One order per attempt: ignore extra clicks while sending, and send the
+    // same request id again on a retry so the server never creates a duplicate.
+    if (submitting.current) return;
+    submitting.current = true;
+    requestId.current ??= newRequestId();
     setFormError(null);
     const payload = {
+      request_id: requestId.current,
       customer_name: String(form.get("customer_name") ?? ""),
       phone: String(form.get("phone") ?? ""),
       email: String(form.get("email") ?? ""),
@@ -143,13 +160,22 @@ export function CheckoutForm({ deliveryInside, deliveryOutside, freeThreshold, s
       items: items.map((i) => ({ product_id: i.productId, variant_id: i.variantId, quantity: i.quantity, slug: i.slug })),
     };
     startTransition(async () => {
-      const res = await placeOrderAction(payload);
+      let res: Awaited<ReturnType<typeof placeOrderAction>>;
+      try {
+        res = await placeOrderAction(payload);
+      } catch {
+        submitting.current = false;
+        setFormError("Connection problem. Please check your internet and press the button again; you won't be charged twice.");
+        return;
+      }
+      submitting.current = false;
       if (!res.ok) {
         setErrors(res.fieldErrors ?? {});
         setFormError(res.message ?? "Please check your details.");
         toast.error(res.message ?? "Order not placed.");
         return;
       }
+      requestId.current = null;
       setErrors({});
       clear();
       setConfirmation(res.data!);

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import { getPage } from "@/services/catalog";
 import { Breadcrumbs } from "@/components/ui/misc";
 import { RichText } from "@/components/ui/rich-text";
 import { buildMetadata } from "@/lib/seo";
 import { formatDate, toPlainText } from "@/lib/utils";
+import { withSiteDefaults } from "@/lib/page-metadata";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -14,15 +15,17 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const page = await getPage(slug);
   if (!page) return { title: "Page not found", robots: { index: false } };
-  return buildMetadata({
+  return withSiteDefaults(buildMetadata({
     title: page.meta_title || page.title,
     description: page.meta_description || toPlainText(page.content, 160),
     path: `/pages/${page.slug}`,
-  });
+  }));
 }
 
 export default async function ContentPage({ params }: Props) {
   const { slug } = await params;
+  // The About page has its own URL; /pages/about would be a duplicate.
+  if (slug === "about") permanentRedirect("/about");
   const page = await getPage(slug);
   if (!page) notFound();
   return (

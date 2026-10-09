@@ -61,7 +61,7 @@ export function parseListingParams(sp: RawSearchParams, defaults: Partial<Produc
 
 /** True when the visitor applied filters (such pages are noindex to avoid thin duplicates). */
 export function hasActiveFilters(sp: RawSearchParams): boolean {
-  return ["brand", "min", "max", "ram", "storage", "condition", "stock", "sort", "flag"].some((k) => Boolean(one(sp[k])));
+  return ["brand", "category", "q", "min", "max", "ram", "storage", "condition", "stock", "sort", "flag"].some((k) => Boolean(one(sp[k])));
 }
 
 /** Rebuild a URL keeping current params and applying changes (null removes a key). */

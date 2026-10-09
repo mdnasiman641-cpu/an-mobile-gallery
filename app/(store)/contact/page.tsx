@@ -6,16 +6,17 @@ import { JsonLd } from "@/components/seo/json-ld";
 import { breadcrumbJsonLd } from "@/lib/jsonld";
 import { buildMetadata } from "@/lib/seo";
 import { whatsappLink } from "@/lib/utils";
+import { withSiteDefaults } from "@/lib/page-metadata";
 
 export const revalidate = 86400;
 
 export async function generateMetadata(): Promise<Metadata> {
   const s = await getSiteSettings();
-  return buildMetadata({
+  return withSiteDefaults(buildMetadata({
     title: `Contact ${s.store_name}`,
     description: `Call, WhatsApp or visit ${s.store_name}. ${s.opening_hours ?? ""}`.trim(),
     path: "/contact",
-  });
+  }));
 }
 
 export default async function ContactPage() {

@@ -31,6 +31,7 @@ import { SECTION_DEFS, sectionLimit, sectionText, type HomepageSection, type Sec
 import { EMI_PROMO, EXCHANGE_PROMO } from "@/lib/storefront";
 import { nowLabel, whatsappLink } from "@/lib/utils";
 import type { Banner, Category, ProductCard } from "@/types";
+import { withSiteDefaults } from "@/lib/page-metadata";
 
 // Static page. Refreshed immediately when an admin changes products, stock,
 // banners, settings or Homepage Management (on-demand invalidation). The
@@ -41,13 +42,13 @@ export const revalidate = 1800;
 
 export async function generateMetadata(): Promise<Metadata> {
   const seo = await getSeoSettings();
-  return buildMetadata({
+  return withSiteDefaults(buildMetadata({
     title: seo.site_title,
     description: seo.site_description,
     path: "/",
     image: seo.default_og_image,
     absoluteTitle: true,
-  });
+  }));
 }
 
 function findAccessories(categories: Category[]): Category | undefined {

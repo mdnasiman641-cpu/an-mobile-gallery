@@ -9,6 +9,7 @@ import { OrderStatusForm } from "@/components/admin/order-status-form";
 import { Badge } from "@/components/ui/misc";
 import { formatDate, formatPrice, isSvg, orderStatusLabel, orderStatusTone, whatsappLink } from "@/lib/utils";
 import type { Order, OrderItem } from "@/types";
+import { ORDER_COLUMNS } from "@/lib/order-columns";
 
 export const metadata: Metadata = { title: "Order" };
 
@@ -19,9 +20,13 @@ export default async function AdminOrderPage({ params }: { params: Promise<{ id:
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
   await requireStaff("admin");
   const supabase = await createClient();
-  const { data } = await supabase.from("orders").select("*, order_items(*)").eq("id", id).maybeSingle();
+  // The staff note is not readable by customers, so it comes from a staff-only function.
+  const [{ data }, noteRes] = await Promise.all([
+    supabase.from("orders").select(`${ORDER_COLUMNS}, order_items(*)`).eq("id", id).maybeSingle(),
+    supabase.rpc("admin_order_note", { p_order_id: id }),
+  ]);
   if (!data) notFound();
-  const o = data as Order & { order_items: OrderItem[] };
+  const o = { ...(data as unknown as Order), admin_note: (noteRes.data as string | null) ?? null } as Order & { order_items: OrderItem[] };
   const wa = whatsappLink(o.phone, `Hello ${o.customer_name}, this is about your order ${o.order_number}.`);
 
   return (

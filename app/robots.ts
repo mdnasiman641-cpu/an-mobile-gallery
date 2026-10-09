@@ -7,9 +7,13 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
-        // Private areas only. Product, brand and category pages stay crawlable.
-        // /browse is the internal target of filtered listings (never linked).
-        disallow: ["/admin", "/private", "/api/private", "/account", "/checkout", "/cart", "/search", "/browse"],
+        // Product, brand and category pages stay crawlable. Account, checkout,
+        // cart and search pages are NOT blocked here on purpose: they carry a
+        // noindex tag, which search engines can only see if they may crawl the
+        // page (a blocked URL can still be indexed from links). Access control
+        // never relies on robots.txt. /browse is the internal target of
+        // filtered listings (never linked).
+        disallow: ["/admin", "/private", "/api/private", "/browse"],
       },
     ],
     sitemap: absoluteUrl("/sitemap.xml"),
