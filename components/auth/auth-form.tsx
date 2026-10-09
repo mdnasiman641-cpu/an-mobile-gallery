@@ -3,7 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getBrowserClient } from "@/lib/supabase/browser";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/form";
 import { bdPhone } from "@/lib/validation";
@@ -36,10 +35,13 @@ export function AuthForm({
     const form = new FormData(e.currentTarget);
     const email = String(form.get("email") ?? "").trim().toLowerCase();
     const password = String(form.get("password") ?? "");
-    const supabase = getBrowserClient();
     setLoading(true);
 
     try {
+      // Loaded on submit only: the sign-in page renders without the Supabase library
+      // (less work for the server on every visit, smaller first download).
+      const { getBrowserClient } = await import("@/lib/supabase/browser");
+      const supabase = getBrowserClient();
       if (mode === "login") {
         const { error: err } = await supabase.auth.signInWithPassword({ email, password });
         if (err) {

@@ -1,6 +1,9 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+// Admin-only pages: the client calls router.refresh() after these actions, so
+// they do not also call revalidatePath() (that re-rendered the whole page inside
+// the action request, doubling the CPU of each action on Workers).
+
 import { z } from "zod";
 import { assertStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -14,7 +17,6 @@ import { decryptSecret } from "@/lib/ai/crypto";
 import { discoverModels, normalizeBaseUrl, type DiscoveredModel } from "@/lib/ai/model-discovery";
 import type { ActionResult } from "@/types";
 
-const PATH = "/admin/settings/ai";
 const KEY_STORE_UNAVAILABLE = "The secure key store is not available. On Cloudflare it uses the Worker's R2 binding; when running locally, set AI_KEYS_ENCRYPTION_SECRET.";
 const uuid = z.string().uuid();
 const optionalInt = (min: number, max: number) =>
@@ -73,14 +75,12 @@ export async function saveAiModelAction(id: string | null, values: unknown): Pro
   if (id === null) {
     const { data, error } = await supabase.from("ai_models").insert({ ...row, created_by: session.userId }).select("id").single();
     if (error || !data) return { ok: false, message: dbError(error?.message ?? "") };
-    revalidatePath(PATH);
     return { ok: true, message: "Model added", data: { id: (data as { id: string }).id } };
   }
   const { error } = await supabase.from("ai_models").update(row).eq("id", id);
   if (error) return { ok: false, message: dbError(error.message) };
   // New key or new endpoint: start with a clean health record.
   if (api_key) await resetModelHealth(id).catch(() => undefined);
-  revalidatePath(PATH);
   return { ok: true, message: "Model saved", data: { id } };
 }
 
@@ -91,7 +91,6 @@ export async function deleteAiModelAction(id: string): Promise<ActionResult> {
   const supabase = await createClient();
   const { error } = await supabase.from("ai_models").delete().eq("id", id);
   if (error) return { ok: false, message: dbError(error.message) };
-  revalidatePath(PATH);
   return { ok: true, message: "Model removed" };
 }
 
@@ -103,7 +102,6 @@ export async function setAiModelEnabledAction(id: string, enabled: boolean): Pro
   const supabase = await createClient();
   const { error } = await supabase.from("ai_models").update({ is_enabled: Boolean(enabled) }).eq("id", id);
   if (error) return { ok: false, message: dbError(error.message) };
-  revalidatePath(PATH);
   return { ok: true, message: enabled ? "Model enabled" : "Model disabled" };
 }
 
@@ -121,7 +119,6 @@ export async function moveAiModelAction(id: string, direction: "up" | "down"): P
   [list[i], list[j]] = [list[j], list[i]];
   const results = await Promise.all(list.map((mid, idx) => supabase.from("ai_models").update({ priority: (idx + 1) * 10 }).eq("id", mid)));
   if (results.some((r) => r.error)) return { ok: false, message: "Couldn't reorder. Please try again." };
-  revalidatePath(PATH);
   return { ok: true, message: "Priority updated" };
 }
 
@@ -150,7 +147,6 @@ export async function testAiModelAction(id: string): Promise<ActionResult<{ step
         steps.push(diagnosticStep("generate", false, `Failed. ${reason ? `${AUTH_REASON_LABELS[reason]}. ` : ""}${label}: ${last?.message ?? res.message}`));
       }
     }
-    revalidatePath(PATH);
     const ok = steps.every((st) => st.ok !== false);
     const summary = steps.map((st) => `${st.label}: ${st.ok === true ? "OK" : st.ok === false ? "FAILED" : "not checked"}`).join(" · ");
     return { ok, message: ok ? `Connection OK. ${summary}` : `Problem found. ${summary}`, data: { steps } };
@@ -168,7 +164,6 @@ export async function resetAiHealthAction(id: string): Promise<ActionResult> {
   } catch (e) {
     return { ok: false, message: e instanceof AiSetupError ? e.message : "Couldn't reset." };
   }
-  revalidatePath(PATH);
   return { ok: true, message: "Health reset: the model is eligible again" };
 }
 
@@ -180,7 +175,6 @@ export async function saveAiRoutingAction(values: unknown): Promise<ActionResult
   const supabase = await createClient();
   const { error } = await supabase.from("ai_settings").upsert({ id: 1, ...parsed.data, updated_at: new Date().toISOString() });
   if (error) return { ok: false, message: dbError(error.message) };
-  revalidatePath(PATH);
   return { ok: true, message: "Routing saved" };
 }
 
@@ -317,7 +311,6 @@ export async function addSelectedModelsAction(values: unknown): Promise<ActionRe
   if (rows.length === 0) return { ok: true, message: "All selected models are already added.", data: { added: 0, skipped } };
   const { error } = await supabase.from("ai_models").insert(rows);
   if (error) return { ok: false, message: dbError(error.message) };
-  revalidatePath(PATH);
   return {
     ok: true,
     message: `Added ${rows.length} model${rows.length === 1 ? "" : "s"}${skipped ? ` (${skipped} already added)` : ""}. They are tried in the order shown.`,

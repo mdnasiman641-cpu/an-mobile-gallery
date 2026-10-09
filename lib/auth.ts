@@ -1,6 +1,8 @@
 import "server-only";
 import { cache } from "react";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { hasSupabaseAuthCookie } from "@/lib/supabase/auth-cookie";
 import { createClient } from "@/lib/supabase/server";
 import type { StaffRole } from "@/types";
 
@@ -14,6 +16,8 @@ const ROLE_RANK: Record<StaffRole, number> = { editor: 1, admin: 2, super_admin:
 
 /** The signed-in user (validated with Supabase Auth, not just the cookie). */
 export const getCurrentUser = cache(async () => {
+  // Signed out: skip creating a Supabase client and the Auth request.
+  if (!hasSupabaseAuthCookie((await cookies()).getAll())) return null;
   const supabase = await createClient();
   const {
     data: { user },

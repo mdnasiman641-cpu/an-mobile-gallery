@@ -136,7 +136,7 @@ Then by hand: admin login → upload a product image → save → the product pa
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| **Error 1102 "Worker exceeded resource limits"** on admin, checkout, account or filtered pages | Free plan allows 10 ms CPU per request; server-rendering a page can exceed it | Upgrade the account to **Workers Paid ($5/month)**; no code change |
+| **Error 1102 "Worker exceeded resource limits"** on admin, login, checkout, account or filtered pages | Either CPU (Free plan: 10 ms per request, including loading code in a fresh Worker instance; Paid: 30 s) or memory (128 MB per instance, both plans). Server-rendered admin pages can't be cached, so on Free they regularly need more than 10 ms, especially right after a deploy or idle time | **Confirm first:** Workers & Pages → `an-mobile-gallery` → **Metrics → Invocation statuses** (shows "Exceeded CPU Time Limits" vs "Exceeded Memory"), or **Observability → Events**, filter by outcome `exceededCpu` or `exceededMemory`, open one event and note its URL path, outcome, CPU time and wall time. If it is CPU on the Free plan: upgrade to **Workers Paid ($5/month)**; no code or config change needed. If it is memory: send those events for analysis |
 | Build error mentioning Node.js middleware / `proxy` | `@opennextjs/cloudflare` older than 1.20.3 | `npm install @opennextjs/cloudflare@latest` |
 | Product images fail with error 9422 | 5,000 free image transformations used this month | Set build variable `NEXT_IMAGE_UNOPTIMIZED=true` and redeploy (images are already compressed WebP) |
 | Sign-up email link opens the wrong site | Supabase Site URL / Redirect URLs | Step 5 |

@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import { supabaseAnonKey, supabaseUrl } from "@/lib/env";
@@ -7,8 +8,13 @@ import { supabaseAnonKey, supabaseUrl } from "@/lib/env";
  * Supabase client bound to the visitor's auth cookies.
  * Use in Server Components, Server Actions and Route Handlers that need
  * to know who the user is (account pages, admin). RLS applies.
+ *
+ * One client per request while rendering (React cache): an admin page used
+ * to build 3-6 clients (auth check, layout, page, helpers). Outside a render
+ * (Server Actions, Route Handlers) React's cache is not active and every call
+ * still gets its own client, exactly as before.
  */
-export async function createClient() {
+export const createClient = cache(async () => {
   const cookieStore = await cookies();
 
   return createServerClient(supabaseUrl, supabaseAnonKey, {
@@ -26,4 +32,4 @@ export async function createClient() {
       },
     },
   });
-}
+});

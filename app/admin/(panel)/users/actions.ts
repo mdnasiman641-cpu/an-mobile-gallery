@@ -1,7 +1,10 @@
 "use server";
 
+// Admin-only pages: the client calls router.refresh() after these actions, so
+// they do not also call revalidatePath() (that re-rendered the whole page inside
+// the action request, doubling the CPU of each action on Workers).
+
 import { z } from "zod";
-import { revalidatePath } from "next/cache";
 import { assertStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { getServiceClient } from "@/lib/supabase/admin";
@@ -45,7 +48,6 @@ export async function addStaffAction(input: unknown): Promise<ActionResult> {
 
   const { error } = await supabase.from("admin_users").upsert({ user_id: userId, role, is_active: true }, { onConflict: "user_id" });
   if (error) return { ok: false, message: "Staff access couldn't be granted." };
-  revalidatePath("/admin/users");
   return { ok: true, message: `${email} now has ${role.replace("_", " ")} access` };
 }
 
@@ -62,7 +64,6 @@ export async function updateStaffAction(id: string, patch: { role?: "super_admin
   if (typeof patch.is_active === "boolean") clean.is_active = patch.is_active;
   const { error } = await supabase.from("admin_users").update(clean).eq("id", id);
   if (error) return { ok: false, message: "Staff access couldn't be updated." };
-  revalidatePath("/admin/users");
   return { ok: true, message: "Staff access updated" };
 }
 
@@ -72,6 +73,5 @@ export async function removeStaffAction(id: string): Promise<ActionResult> {
   const supabase = await createClient();
   const { error } = await supabase.from("admin_users").delete().eq("id", id).neq("user_id", session.userId);
   if (error) return { ok: false, message: "Staff access couldn't be removed." };
-  revalidatePath("/admin/users");
   return { ok: true, message: "Staff access removed. The account stays as a normal customer account." };
 }

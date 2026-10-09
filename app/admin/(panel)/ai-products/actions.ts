@@ -1,6 +1,9 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+// Admin-only pages: the client calls router.refresh() after these actions, so
+// they do not also call revalidatePath() (that re-rendered the whole page inside
+// the action request, doubling the CPU of each action on Workers).
+
 import { z } from "zod";
 import { assertStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -22,12 +25,9 @@ export async function runAiTaskAction(productId: string, task: ContentTask, repl
     const { jobId, alreadyQueued } = await enqueueAiJob(productId, task, { replaceManual, trigger: "manual", requestedBy: session.userId });
     if (alreadyQueued) {
       const res = await processAiJob(jobId); // picks it up if it was stuck; otherwise reports it is running
-      revalidatePath(`/admin/products/${productId}`);
       return { ok: res.ok, message: res.ok ? res.message : "An AI job for this product is already running. Try again in a minute." };
     }
     const res = await processAiJob(jobId);
-    revalidatePath(`/admin/products/${productId}`);
-    revalidatePath("/admin/ai-products");
     return { ok: res.ok, message: res.message };
   } catch (e) {
     return { ok: false, message: e instanceof AiSetupError ? e.message : `AI request failed: ${(e as Error).message}` };
@@ -48,7 +48,6 @@ export async function retryAiJobAction(jobId: string): Promise<ActionResult> {
     const task: ContentTask = job.task_type;
     const { jobId: next } = await enqueueAiJob(job.product_id, task, { replaceManual: job.replace_manual, trigger: "retry", requestedBy: session.userId });
     const res = await processAiJob(next);
-    revalidatePath("/admin/ai-products");
     return { ok: res.ok, message: res.message };
   } catch (e) {
     return { ok: false, message: e instanceof AiSetupError ? e.message : (e as Error).message };
@@ -61,7 +60,6 @@ export async function processAiQueueAction(): Promise<ActionResult> {
   if ("error" in session) return { ok: false, message: session.error };
   try {
     const results = await processPendingJobs(2);
-    revalidatePath("/admin/ai-products");
     if (results.length === 0) return { ok: true, message: "The AI queue is empty." };
     const done = results.filter((r) => r.ok).length;
     return { ok: done > 0, message: `${done} of ${results.length} queued product${results.length === 1 ? "" : "s"} processed.${done < results.length ? ` ${results.find((r) => !r.ok)?.message ?? ""}` : ""}` };
@@ -88,7 +86,6 @@ export async function saveAiExtrasAction(productId: string, values: unknown): Pr
   const extras = { ...((data as { extras: Record<string, unknown> } | null)?.extras ?? {}), ...parsed.data, manual: true };
   const { error } = await supabase.from("ai_product_content").upsert({ product_id: productId, extras }, { onConflict: "product_id" });
   if (error) return { ok: false, message: "Couldn't save. Has the latest database migration been run?" };
-  revalidatePath(`/admin/products/${productId}`);
   return { ok: true, message: "Saved (marked as manually edited)" };
 }
 
@@ -97,6 +94,5 @@ export async function syncStockNowAction(): Promise<ActionResult> {
   const session = await assertStaff("admin");
   if ("error" in session) return { ok: false, message: session.error };
   const res = await syncFromExportUrl();
-  revalidatePath("/admin/ai-products");
   return { ok: res.ok, message: res.message };
 }

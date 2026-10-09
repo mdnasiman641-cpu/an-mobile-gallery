@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { hasSupabaseAuthCookie } from "@/lib/supabase/auth-cookie";
 
 /**
  * Runs before matching requests (Next.js 16 "proxy", formerly middleware).
@@ -14,6 +15,16 @@ export async function proxy(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) return response;
+
+  const { pathname } = request.nextUrl;
+  const isAdminArea = pathname.startsWith("/admin") && !pathname.startsWith("/admin/login");
+  const isAccountArea = pathname.startsWith("/account");
+
+  // No session cookie: nothing to refresh or validate (saves CPU on every
+  // signed-out request). Same outcome as before: protected areas redirect.
+  if (!hasSupabaseAuthCookie(request.cookies.getAll())) {
+    return isAdminArea || isAccountArea ? redirectToLogin(request, pathname, isAdminArea) : response;
+  }
 
   const supabase = createServerClient(url, key, {
     cookies: {
@@ -32,19 +43,17 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { pathname } = request.nextUrl;
-  const isAdminArea = pathname.startsWith("/admin") && !pathname.startsWith("/admin/login");
-  const isAccountArea = pathname.startsWith("/account");
-
-  if (!user && (isAdminArea || isAccountArea)) {
-    const loginUrl = request.nextUrl.clone();
-    loginUrl.pathname = isAdminArea ? "/admin/login" : "/login";
-    loginUrl.search = "";
-    loginUrl.searchParams.set("next", pathname);
-    return NextResponse.redirect(loginUrl);
-  }
+  if (!user && (isAdminArea || isAccountArea)) return redirectToLogin(request, pathname, isAdminArea);
 
   return response;
+}
+
+function redirectToLogin(request: NextRequest, pathname: string, isAdminArea: boolean) {
+  const loginUrl = request.nextUrl.clone();
+  loginUrl.pathname = isAdminArea ? "/admin/login" : "/login";
+  loginUrl.search = "";
+  loginUrl.searchParams.set("next", pathname);
+  return NextResponse.redirect(loginUrl);
 }
 
 export const config = {
