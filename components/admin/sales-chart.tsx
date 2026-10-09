@@ -1,5 +1,9 @@
 import { formatPrice } from "@/lib/utils";
 
+// Same output as toLocaleDateString("en-GB", { day, month }), but one formatter per instance.
+let dayFormatter: Intl.DateTimeFormat | null = null;
+const dayLabel = () => (dayFormatter ??= new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }));
+
 /**
  * 14-day sales bars. Single series, one hue (no legend needed; the title
  * names it). Native <title> tooltips per bar, plus a data table for screen
@@ -12,7 +16,7 @@ export function SalesChart({ data }: { data: { day: string; total: number; order
   const pad = { top: 12, bottom: 24, left: 0, right: 0 };
   const slot = (W - pad.left - pad.right) / Math.max(data.length, 1);
   const barW = Math.max(6, slot - 8);
-  const label = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const label = (d: string) => dayLabel().format(new Date(`${d}T00:00:00`));
 
   return (
     <figure>

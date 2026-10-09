@@ -155,8 +155,8 @@ export async function saveSiteSettingsAction(values: unknown): Promise<ActionRes
   const supabase = await createClient();
   const { error } = await supabase.from("site_settings").update(parsed.data).eq("id", 1);
   if (error) return { ok: false, message: "Settings couldn't be saved." };
-  invalidateContent();
-  invalidateProduct(); // delivery charges & store name appear on product pages
+  invalidateContent(); // refreshes every page (store name, delivery charges appear on product pages)
+  invalidateProduct(); // and the cached listing data
   return { ok: true, message: "Settings saved" };
 }
 

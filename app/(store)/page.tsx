@@ -32,9 +32,12 @@ import { EMI_PROMO, EXCHANGE_PROMO } from "@/lib/storefront";
 import { nowLabel, whatsappLink } from "@/lib/utils";
 import type { Banner, Category, ProductCard } from "@/types";
 
-// Static page, refreshed at most every 10 minutes (and immediately when an
-// admin changes products, banners, settings or Homepage Management).
-export const revalidate = 600;
+// Static page. Refreshed immediately when an admin changes products, stock,
+// banners, settings or Homepage Management (on-demand invalidation). The
+// time-based refresh is only a fallback (e.g. a banner's start/end time) and
+// runs every 30 minutes: each refresh is a full server render, which on
+// Cloudflare Workers Free can exceed the 10 ms CPU limit.
+export const revalidate = 1800;
 
 export async function generateMetadata(): Promise<Metadata> {
   const seo = await getSeoSettings();

@@ -12,7 +12,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
  *   even dynamic pages (search, account) don't re-query it on each request.
  */
 export const REVALIDATE = {
-  home: 600, // 10 min
+  home: 1800, // 30 min (fallback only; changes refresh it immediately)
   catalog: 3600, // 1 hour — product, brand, category pages
   static: 86400, // 1 day — about, contact, pages
 } as const;
@@ -32,11 +32,29 @@ function expireTags(tags: Tag[]) {
   for (const tag of tags) revalidateTag(tag, { expire: 0 });
 }
 
-/** Product created/updated/deleted, stock or price changed. */
+/**
+ * Pages that list products. A product change refreshes these, not the whole
+ * site: revalidatePath("/", "layout") used to mark EVERY cached page stale
+ * (all product, brand, category and info pages), and on Cloudflare Workers
+ * Free each of those then needed a full server render on its next visit.
+ */
+const PRODUCT_LIST_PATHS = ["/", "/products", "/offers", "/brands", "/categories", "/sitemap.xml", "/feeds/google-merchant.xml"] as const;
+// Every brand / category page (route pattern). The route group is listed too,
+// since the pattern Next.js matches depends on how the route is resolved.
+const PRODUCT_LIST_PATTERNS = ["/brands/[slug]", "/categories/[slug]", "/(store)/brands/[slug]", "/(store)/categories/[slug]"] as const;
+
+/**
+ * Product created/updated/deleted, stock or price changed.
+ * Refreshes the product's own page(s), every page that lists products and the
+ * cached listing data. Other products' pages keep their "related products"
+ * cards until their own hourly refresh (REVALIDATE.catalog); checkout always
+ * re-checks price and stock in the database.
+ */
 export function invalidateProduct(slugs: (string | null | undefined)[] = []) {
   expireTags([CACHE_TAGS.catalog]);
-  for (const slug of slugs) if (slug) revalidatePath(`/products/${slug}`);
-  revalidatePath("/", "layout");
+  for (const slug of new Set(slugs)) if (slug) revalidatePath(`/products/${slug}`);
+  for (const path of PRODUCT_LIST_PATHS) revalidatePath(path);
+  for (const pattern of PRODUCT_LIST_PATTERNS) revalidatePath(pattern, "page");
 }
 
 /**

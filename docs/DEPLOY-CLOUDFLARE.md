@@ -132,6 +132,26 @@ node scripts/smoke-test.mjs https://YOUR-DOMAIN --product=apple-iphone-15-pro-ma
 
 Then by hand: admin login → upload a product image → save → the product page shows the new image and price at once (on-demand revalidation through the Durable Object tag cache).
 
+## 6b. Keeping Worker CPU low on Workers Free (10 ms per request)
+
+What uses the Worker on every request, and what to do about it:
+
+| Request | Worker CPU | Notes |
+|---|---|---|
+| Cached public page (home, product, brand, category, info pages) | Low | Answered from the R2/regional cache before Next.js loads (`enableCacheInterception`). |
+| Cache miss / refresh of a public page | **High** (full server render) | Happens after an admin change and on the time-based refresh. Product saves now refresh only the pages that list products, not the whole site; the homepage's time-based refresh is every 30 min. |
+| Admin pages, account, checkout, filtered listings | **High** (always rendered per request) | Can't be cached (private or per-visitor). |
+| `/_next/image` (optimised product photos) | Runs the Worker for **every image** | Every product photo on every page is a separate Worker request. |
+
+**Taking images off the Worker (recommended on Free).** Two options, both set as **Build variables** (Settings → Build → Variables), then redeploy:
+
+1. `NEXT_IMAGE_LOADER=cloudflare`: resizing by Cloudflare's edge (`/cdn-cgi/image/...`), which never runs the Worker. First enable it for the zone:
+   Cloudflare dashboard → `anmobilegadgets.com` → **Images → Transformations → Enable for zone**, and allow your Supabase host
+   (`<project-ref>.supabase.co`) as a source (or "any origin"). Same free allowance as now (5,000 unique transformations / month).
+   Check one product photo loads before relying on it.
+2. `NEXT_IMAGE_UNOPTIMIZED=true`: photos load straight from Supabase Storage (no Worker, no transformations). Uploads are already
+   resized to 1600 px WebP (~150 KB), so pages download more image data than with resizing.
+
 ## 7. Known limits and what to do
 
 | Symptom | Cause | Fix |
