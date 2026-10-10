@@ -10,6 +10,8 @@ import { Badge } from "@/components/ui/misc";
 import { formatDate, formatPrice, isSvg, orderStatusLabel, orderStatusTone, whatsappLink } from "@/lib/utils";
 import type { Order, OrderItem } from "@/types";
 import { ORDER_COLUMNS } from "@/lib/order-columns";
+import { ShipmentPanel } from "@/components/admin/shipment-panel";
+import { SHIPMENT_COLUMNS, type ShipmentEventRow, type ShipmentRow } from "@/lib/couriers";
 
 export const metadata: Metadata = { title: "Order" };
 
@@ -21,11 +23,40 @@ export default async function AdminOrderPage({ params }: { params: Promise<{ id:
   await requireStaff("admin");
   const supabase = await createClient();
   // The staff note is not readable by customers, so it comes from a staff-only function.
-  const [{ data }, noteRes] = await Promise.all([
+  // Shipments are admin-only (RLS). Before migration 0014 these reads just return errors and the panel stays empty.
+  const [{ data }, noteRes, shipRes, courierRes] = await Promise.all([
     supabase.from("orders").select(`${ORDER_COLUMNS}, order_items(*)`).eq("id", id).maybeSingle(),
     supabase.rpc("admin_order_note", { p_order_id: id }),
+    supabase.from("shipments").select(SHIPMENT_COLUMNS).eq("order_id", id).order("created_at", { ascending: false }),
+    supabase
+      .from("courier_settings")
+      .select("is_enabled, client_id, client_secret_hint, store_id, default_delivery_type, default_item_type, default_weight")
+      .eq("provider", "pathao")
+      .maybeSingle(),
   ]);
   if (!data) notFound();
+  const shipments = (shipRes.data as ShipmentRow[] | null) ?? [];
+  const eventsRes = shipments.length
+    ? await supabase
+        .from("shipment_events")
+        .select("id, shipment_id, status, source, provider_status, note, occurred_at")
+        .in(
+          "shipment_id",
+          shipments.map((s) => s.id),
+        )
+        .order("occurred_at", { ascending: false })
+        .limit(100)
+    : null;
+  const events = (eventsRes?.data as ShipmentEventRow[] | null) ?? [];
+  const courier = courierRes.data as {
+    is_enabled: boolean;
+    client_id: string | null;
+    client_secret_hint: string | null;
+    store_id: number | null;
+    default_delivery_type: 12 | 24 | 48;
+    default_item_type: 1 | 2 | 3;
+    default_weight: number | string;
+  } | null;
   const o = { ...(data as unknown as Order), admin_note: (noteRes.data as string | null) ?? null } as Order & { order_items: OrderItem[] };
   const wa = whatsappLink(o.phone, `Hello ${o.customer_name}, this is about your order ${o.order_number}.`);
 
@@ -133,6 +164,30 @@ export default async function AdminOrderPage({ params }: { params: Promise<{ id:
               ) : null}
             </section>
           </div>
+
+          {shipRes.error ? (
+            <p className="rounded-[var(--radius-card)] border border-dashed border-line-strong bg-surface p-4 text-sm text-ink-soft">
+              Shipments and tracking need database migration 0014. Run it in Supabase (see docs/DEPLOY-CLOUDFLARE.md).
+            </p>
+          ) : (
+            <ShipmentPanel
+              orderId={o.id}
+              orderNumber={o.order_number}
+              orderStatus={o.status}
+              orderTotal={Number(o.total)}
+              paid={o.payment_status === "paid"}
+              itemCount={o.order_items.reduce((n, i) => n + i.quantity, 0)}
+              itemSummary={o.order_items.map((i) => `${i.quantity}× ${i.product_name}${i.variant_label ? ` (${i.variant_label})` : ""}`).join(", ")}
+              shipments={shipments}
+              events={events}
+              pathao={{
+                available: Boolean(courier?.is_enabled && courier.client_id && courier.client_secret_hint && courier.store_id),
+                deliveryType: courier?.default_delivery_type ?? 48,
+                itemType: courier?.default_item_type ?? 2,
+                weight: Number(courier?.default_weight ?? 0.5),
+              }}
+            />
+          )}
         </div>
 
         <aside className="h-fit rounded-[var(--radius-card)] border border-line bg-surface p-5" aria-label="Update order">

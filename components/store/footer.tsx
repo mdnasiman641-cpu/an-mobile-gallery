@@ -100,7 +100,7 @@ export async function StoreFooter() {
               </Link>
             </li>
             <li>
-              <Link href="/account/orders" className={linkCls}>
+              <Link href="/track" className={linkCls}>
                 Track your order
               </Link>
             </li>

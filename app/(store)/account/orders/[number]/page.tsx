@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/misc";
 import { formatDate, formatPrice, isSvg, orderStatusLabel, orderStatusTone, paymentStatusLabel } from "@/lib/utils";
 import type { Order, OrderItem } from "@/types";
 import { ORDER_COLUMNS } from "@/lib/order-columns";
+import { TrackingView } from "@/components/store/tracking-view";
+import { customerStatus, type TrackingResult } from "@/lib/couriers";
 
 const STEPS = ["pending", "confirmed", "processing", "shipped", "delivered"] as const;
 
@@ -14,13 +16,13 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
   const { number } = await params;
   const user = await requireUser(`/account/orders/${number}`);
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("orders")
-    .select(`${ORDER_COLUMNS}, order_items(*)`)
-    .eq("order_number", number)
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const [{ data }, trackRes] = await Promise.all([
+    supabase.from("orders").select(`${ORDER_COLUMNS}, order_items(*)`).eq("order_number", number).eq("user_id", user.id).maybeSingle(),
+    // courier details (owner only, checked in the database); null before migration 0014
+    /^[A-Z]{2,6}-\d{6}-\d{1,10}$/.test(number) ? supabase.rpc("track_order", { p_order_number: number }) : Promise.resolve({ data: null }),
+  ]);
   if (!data) notFound();
+  const tracking = (trackRes.data as TrackingResult | null) ?? null;
   // admin_note is not selected (staff-only)
   const order = data as unknown as Omit<Order, "admin_note"> & { order_items: OrderItem[] };
   const stepIndex = STEPS.indexOf(order.status as (typeof STEPS)[number]);
@@ -34,11 +36,21 @@ export default async function AccountOrderDetailPage({ params }: { params: Promi
         <h2 id="order-h" className="text-lg font-bold">
           Order {order.order_number}
         </h2>
-        <Badge tone={orderStatusTone[order.status]}>{orderStatusLabel[order.status]}</Badge>
+        {tracking ? (
+          <Badge tone={customerStatus(tracking.status, tracking.shipment?.active ? tracking.shipment.status : null).tone}>
+            {customerStatus(tracking.status, tracking.shipment?.active ? tracking.shipment.status : null).label}
+          </Badge>
+        ) : (
+          <Badge tone={orderStatusTone[order.status]}>{orderStatusLabel[order.status]}</Badge>
+        )}
       </div>
       <p className="text-sm text-ink-mute">Placed {formatDate(order.created_at, true)}</p>
 
-      {order.status !== "cancelled" ? (
+      {tracking ? (
+        <div className="mt-5">
+          <TrackingView result={tracking} showItems={false} summary={false} />
+        </div>
+      ) : order.status !== "cancelled" ? (
         <ol className="mt-5 grid grid-cols-5 gap-1" aria-label="Order progress">
           {STEPS.map((s, i) => (
             <li key={s} className="text-center text-[11px] sm:text-xs">

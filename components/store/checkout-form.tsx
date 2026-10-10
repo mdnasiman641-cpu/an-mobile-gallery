@@ -95,6 +95,9 @@ export function CheckoutForm({ deliveryInside, deliveryOutside, freeThreshold, s
           <ButtonLink href="/products" variant="outline">
             Continue shopping
           </ButtonLink>
+          <ButtonLink href={`/track?order=${encodeURIComponent(confirmation.order_number)}`} variant="outline">
+            Track this order
+          </ButtonLink>
           <ButtonLink href="/account/orders">View my orders</ButtonLink>
         </div>
         {phone ? (

@@ -103,7 +103,18 @@ Do **not** add a "Cache Everything" cache rule: the Worker already caches public
 `supabase/migrations/20261009000010_homepage_ai_sync.sql`, then `20261009000011_ai_staff_access.sql`, then
 `20261009000012_ai_product_completion.sql` (Complete with AI in the product form), then
 `20261010000013_security_order_integrity.sql` (security and duplicate-order fixes; required by the current code for order pages,
-adding staff and checkout), once each, in that order. Until then the homepage keeps its
+adding staff and checkout), then `20261010000014_shipments_tracking.sql` (courier shipments, the `/track` page and Pathao;
+see [COURIER-AND-TRACKING.md](COURIER-AND-TRACKING.md)), once each, in that order.
+
+To check which of these are already applied (read-only, safe to run):
+
+```sql
+select
+  exists (select 1 from pg_proc where proname = 'admin_order_note')     as m0013_applied,
+  exists (select 1 from information_schema.columns
+          where table_schema = 'public' and table_name = 'orders' and column_name = 'client_request_id') as m0013_column,
+  to_regclass('public.shipments') is not null                          as m0014_applied;
+``` Until then the homepage keeps its
 built-in layout and the new admin pages show a "run the migration" notice; nothing else is affected.
 
 **AI in the product form:** Admin → Products → New product. Enter the product name, selling price, RAM and ROM, then **Complete with AI**.

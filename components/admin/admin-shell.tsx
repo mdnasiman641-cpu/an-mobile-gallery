@@ -21,6 +21,7 @@ import {
   ShoppingCart,
   Sparkles,
   Tags,
+  Truck,
   UserCog,
   Users,
   X,
@@ -46,6 +47,7 @@ const NAV: { href: string; label: string; Icon: typeof Package; min: StaffRole }
   { href: "/admin/seo", label: "SEO", Icon: Search, min: "admin" },
   { href: "/admin/settings", label: "Settings", Icon: Settings, min: "admin" },
   { href: "/admin/settings/ai", label: "AI settings", Icon: Bot, min: "admin" },
+  { href: "/admin/settings/courier", label: "Courier", Icon: Truck, min: "admin" },
   { href: "/admin/users", label: "Staff users", Icon: UserCog, min: "super_admin" },
 ];
 
