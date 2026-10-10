@@ -1,12 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, Eraser, RefreshCw, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, CheckCircle2, Eraser, RefreshCw, Search, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/form";
 import { Badge } from "@/components/ui/misc";
 import { relativeTime } from "@/components/admin/ai-health";
-import { COMPLETION_SECTIONS, SECTION_LABELS, type CompletionRun, type CompletionSection } from "@/lib/ai/product-completion";
+import {
+  COMPLETION_SECTIONS,
+  SECTION_LABELS,
+  type CompletionCheck,
+  type CompletionRun,
+  type CompletionSection,
+  type FieldState,
+} from "@/lib/ai/product-completion";
 import type { Verification } from "@/lib/ai/product-content";
 
 export interface ReviewItem {
@@ -49,11 +57,44 @@ export interface AiPanelProps {
   aiFieldCount: number;
   onClearSection: (s: CompletionSection) => void;
   onRemoveAll: () => void;
+  /** Field-level result of the last run (or null before any run). */
+  check: CompletionCheck | null;
+  /** Sections being generated right now. */
+  busySections: CompletionSection[];
+  /** Sections with empty fields in the form now. */
+  missing: CompletionSection[];
+  onGenerateMissing: () => void;
 }
+
+const STATE_BADGE: Record<FieldState, { tone: "signal" | "warn" | "deal" | "neutral"; text: string }> = {
+  pending: { tone: "neutral", text: "Pending" },
+  generating: { tone: "neutral", text: "Generating…" },
+  success: { tone: "signal", text: "Success" },
+  partial: { tone: "warn", text: "Partial" },
+  failed: { tone: "deal", text: "Failed" },
+  skipped: { tone: "neutral", text: "Not requested" },
+};
+
+/** One generation action per section ("Research product" = identity + specifications from the web). */
+const ACTIONS: { label: string; sections: CompletionSection[]; research?: boolean }[] = [
+  { label: "Research product", sections: ["basic", "specs"], research: true },
+  { label: "Generate specifications", sections: ["specs"] },
+  { label: "Generate description", sections: ["description"] },
+  { label: "Generate SEO", sections: ["seo"] },
+  { label: "Generate FAQ", sections: ["faq"] },
+];
 
 export function ProductAiPanel(p: AiPanelProps) {
   const completion = p.run?.completion ?? null;
   const ran = Boolean(p.run);
+  const [selected, setSelected] = useState<CompletionSection[]>([]);
+  const blocked = p.disabled || p.busy || Boolean(p.setupMessage);
+  const toggle = (s: CompletionSection) => setSelected((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
+  // While a run is going, its fields show "Generating…"; the rest keep their last state.
+  const fields = (p.check?.fields ?? []).map((f) =>
+    p.busy && p.busySections.includes(f.section) ? { ...f, state: "generating" as FieldState, note: null } : f,
+  );
+  const failedRequired = p.check && !p.busy ? p.check.retrySections : [];
   return (
     <section aria-labelledby="ai-quick-title" className="mb-4 rounded-[var(--radius-card)] border border-signal/30 bg-surface p-4 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -92,6 +133,49 @@ export function ProductAiPanel(p: AiPanelProps) {
         ) : null}
         <p className="text-xs text-ink-mute" aria-live="polite">
           {p.busy ? "AI is researching and completing product information…" : ran && p.run ? `Last AI run ${relativeTime(p.run.createdAt)} · ${p.run.usedModel}` : null}
+        </p>
+      </div>
+
+      <div className="mt-4 space-y-3 rounded-lg bg-paper p-3">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Generate one part">
+          {ACTIONS.map((a) => (
+            <Button key={a.label} type="button" size="sm" variant="outline" disabled={blocked} onClick={() => p.onComplete(a.sections)}>
+              {a.research ? <Search className="h-3.5 w-3.5" aria-hidden /> : <Sparkles className="h-3.5 w-3.5" aria-hidden />} {a.label}
+            </Button>
+          ))}
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="h-auto min-h-9 whitespace-normal py-1.5 text-left"
+            disabled={blocked || p.missing.length === 0}
+            onClick={p.onGenerateMissing}
+          >
+            Generate all missing fields{p.missing.length ? ` (${p.missing.map((m) => SECTION_LABELS[m]).join(", ")})` : " — none missing"}
+          </Button>
+        </div>
+        <fieldset className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <legend className="sr-only">Regenerate selected parts</legend>
+          <span className="text-xs font-semibold text-ink-mute">Regenerate selected:</span>
+          {COMPLETION_SECTIONS.map((s) => (
+            <label key={s} className="inline-flex min-h-8 items-center gap-1.5 text-sm">
+              <input type="checkbox" className="h-4 w-4 accent-[var(--color-signal)]" checked={selected.includes(s)} onChange={() => toggle(s)} />
+              {SECTION_LABELS[s]}
+            </label>
+          ))}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={blocked || selected.length === 0}
+            onClick={() => p.onComplete(COMPLETION_SECTIONS.filter((s) => selected.includes(s)))}
+          >
+            <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Regenerate selected
+          </Button>
+        </fieldset>
+        <p className="text-xs text-ink-mute">
+          “Generate all missing fields” only fills empty fields and adds missing specifications; it never replaces what is already there. The other buttons replace AI text in their
+          part (your own edits are kept unless you confirm).
         </p>
       </div>
 
@@ -158,10 +242,16 @@ export function ProductAiPanel(p: AiPanelProps) {
 
       {ran && p.run && completion ? (
         <div className="mt-4 space-y-3">
-          {p.justCompleted ? (
-            <p className="flex items-center gap-2 rounded-lg bg-signal-tint p-3 text-sm font-semibold text-signal-dark" role="status">
-              <CheckCircle2 className="h-4 w-4" aria-hidden /> AI completed the product information. Please review before saving.
-            </p>
+          {p.justCompleted && p.check ? (
+            p.check.status === "success" ? (
+              <p className="flex items-center gap-2 rounded-lg bg-signal-tint p-3 text-sm font-semibold text-signal-dark" role="status">
+                <CheckCircle2 className="h-4 w-4" aria-hidden /> AI completed the product information. Please review before saving.
+              </p>
+            ) : (
+              <p className="flex items-center gap-2 rounded-lg bg-warn-tint p-3 text-sm font-semibold" role="status">
+                <AlertTriangle className="h-4 w-4 text-warn" aria-hidden /> Partly completed: some fields are missing or need checking (see below). What was filled is in the form for review.
+              </p>
+            )
           ) : null}
           <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
             <div>
@@ -177,10 +267,36 @@ export function ProductAiPanel(p: AiPanelProps) {
             <div>
               <dt className="inline text-ink-mute">Web research: </dt>
               <dd className="inline">
-                {completion.researched ? `yes, ${completion.sources.length} source${completion.sources.length === 1 ? "" : "s"}` : "not available for this model — values are marked “likely”, not verified"}
+                {completion.researched
+                  ? `yes, ${completion.sources.length} source${completion.sources.length === 1 ? "" : "s"} (listed below)`
+                  : (p.run.researchNote ?? "not performed for this run — values are marked “likely”, not verified")}
               </dd>
             </div>
           </dl>
+          {fields.length ? (
+            <div className="rounded-lg border border-line">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2">
+                <p className="text-sm font-semibold">Field status</p>
+                {failedRequired.length ? (
+                  <Button type="button" size="sm" variant="outline" disabled={blocked} onClick={() => p.onComplete(failedRequired)}>
+                    <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Retry failed fields
+                  </Button>
+                ) : null}
+              </div>
+              <ul className="divide-y divide-line text-sm" aria-label="Field status">
+                {fields.map((f) => (
+                  <li key={f.key} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 px-3 py-1.5">
+                    <span className="min-w-0">
+                      <span className="font-medium">{f.label}</span>
+                      {f.note && f.state !== "skipped" ? <span className="text-ink-soft"> · {f.note}</span> : null}
+                    </span>
+                    <Badge tone={STATE_BADGE[f.state].tone}>{STATE_BADGE[f.state].text}</Badge>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
           {p.run.skipped.length ? (
             <details className="text-xs text-ink-soft">
               <summary className="cursor-pointer">Skipped models ({p.run.skipped.length})</summary>
@@ -295,14 +411,6 @@ export function ProductAiPanel(p: AiPanelProps) {
           ) : null}
 
           <div className="flex flex-wrap gap-2 border-t border-line pt-3">
-            <span className="self-center text-xs font-semibold text-ink-mute">Regenerate:</span>
-            {COMPLETION_SECTIONS.map((s) => (
-              <Button key={s} type="button" size="sm" variant="outline" disabled={p.disabled || p.busy || Boolean(p.setupMessage)} onClick={() => p.onComplete([s])}>
-                <RefreshCw className="h-3.5 w-3.5" aria-hidden /> {SECTION_LABELS[s]}
-              </Button>
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-2">
             <span className="self-center text-xs font-semibold text-ink-mute">Clear AI text:</span>
             {COMPLETION_SECTIONS.filter((s) => s !== "faq").map((s) => (
               <Button key={s} type="button" size="sm" variant="ghost" disabled={p.busy} onClick={() => p.onClearSection(s)}>

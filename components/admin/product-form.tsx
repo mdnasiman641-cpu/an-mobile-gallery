@@ -8,17 +8,21 @@ import { toast } from "sonner";
 import { saveProductAction, duplicateProductAction, deleteProductAction } from "@/app/admin/(panel)/products/actions";
 import { completeProductWithAiAction } from "@/app/admin/(panel)/products/ai-actions";
 import { AiTag, ProductAiPanel, type ReviewItem } from "@/components/admin/product-ai-panel";
+import { SpecEditor } from "@/components/admin/spec-editor";
 import {
   AI_FIELDS,
   COMPLETION_SECTIONS,
   SECTION_FIELDS,
   completionToForm,
+  evaluateCompletion,
   fieldOrigin,
   isProtectedSpec,
   manualConflicts,
   mergeIntoForm,
   mergeSections,
+  missingSections,
   needsReview,
+  onlyEmptyFields,
   pickSections,
   quickSpec,
   removeAiContent,
@@ -45,20 +49,6 @@ import type { Brand, Category, ProductCondition, ProductStatus } from "@/types";
 
 const TABS = ["Basic information", "Pricing", "Inventory", "Images", "Variants", "Specifications", "Description", "SEO"] as const;
 type Tab = (typeof TABS)[number];
-
-const COMMON_SPECS: [string, string][] = [
-  ["Display", "Size"],
-  ["Display", "Type"],
-  ["Platform", "Processor"],
-  ["Platform", "OS"],
-  ["Memory", "RAM"],
-  ["Memory", "Storage"],
-  ["Camera", "Rear camera"],
-  ["Camera", "Front camera"],
-  ["Battery", "Battery"],
-  ["Connectivity", "Network"],
-  ["Body", "Weight"],
-];
 
 const newKey = () => Math.random().toString(36).slice(2);
 
@@ -122,6 +112,7 @@ export function ProductForm({
   const [ai, setAi] = useState<AiFormValues>(() => (aiCompletion ? completionToForm(aiCompletion.completion) : {}));
   const [run, setRun] = useState<CompletionRun | null>(aiCompletion);
   const [aiBusy, setAiBusy] = useState(false);
+  const [busySections, setBusySections] = useState<CompletionSection[]>([]);
   const [justCompleted, setJustCompleted] = useState(false);
   const [aiError, setAiError] = useState<{ message: string; details: string[]; draftSaved: boolean } | null>(null);
   const [confirm, setConfirm] = useState<{ proposed: AiFormValues; conflicts: string[] } | null>(null);
@@ -344,7 +335,12 @@ export function ProductForm({
     else applyAi(proposed, false);
   }
 
-  async function completeWithAi(sections: CompletionSection[]) {
+  /**
+   * mode "fill": AI values replace earlier AI text in those parts (edits need confirmation).
+   * mode "missing": only empty fields / missing spec rows are filled; nothing existing changes.
+   */
+  async function completeWithAi(sections: CompletionSection[], mode: "fill" | "missing" = "fill") {
+    if (sections.length === 0) return;
     if (busyRef.current) return; // one request at a time
     const cur = vRef.current;
     const quickErrors: Record<string, string> = {};
@@ -365,6 +361,7 @@ export function ProductForm({
     }
     busyRef.current = true;
     setAiBusy(true);
+    setBusySections(sections);
     setAiError(null);
     setJustCompleted(false);
     setErrors({});
@@ -391,13 +388,18 @@ export function ProductForm({
       const partial = sections.length < COMPLETION_SECTIONS.length;
       setRun((prev) => (prev && partial ? { ...data, completion: mergeSections(prev.completion, data.completion) } : data));
       setJustCompleted(true);
-      offerAi(pickSections(completionToForm(data.completion), sections));
-      toast.success("AI completed the product information. Please review before saving.");
+      const proposed = pickSections(completionToForm(data.completion), sections);
+      if (mode === "missing") applyAi(onlyEmptyFields(formContent(vRef.current), proposed), false);
+      else offerAi(proposed);
+      // the field list says exactly what was filled and what wasn't
+      if (data.check && data.check.status !== "success") toast.warning(res.message ?? "Partly completed. Check the field status.");
+      else toast.success("AI completed the product information. Please review before saving.");
     } catch {
       setAiError({ message: "The AI request failed. Please try again.", details: [], draftSaved: Boolean(draftId) });
     } finally {
       busyRef.current = false;
       setAiBusy(false);
+      setBusySections([]);
     }
   }
 
@@ -432,6 +434,9 @@ export function ProductForm({
   const tabHasAi = (t: Tab) =>
     (TAB_FIELDS[t] ?? []).some((f) => (f === "specs" ? v.specs.some((r) => !isProtectedSpec(r.name) && specOrigin(r, ai) === "ai") : origin(f) === "ai"));
   const completion = run?.completion ?? null;
+  // Judged on the combined result of all runs (a later run of one part keeps the other parts' results).
+  const check = run ? evaluateCompletion(run.completion, { name: v.name, ram, storage, condition: v.condition }) : null;
+  const missing = missingSections(content, completion?.faq.length ?? 0);
   const unapplied = completion ? unappliedFields(content, completionToForm(completion)) : [];
   const brandName = brands.find((b) => b.id === v.brand_id)?.name ?? completion?.brand?.name ?? null;
   const namedCondition = conditionFromName(v.name);
@@ -465,6 +470,10 @@ export function ProductForm({
         busy={aiBusy}
         disabled={saving || uploading > 0}
         onComplete={(sections) => void completeWithAi(sections)}
+        check={check}
+        busySections={busySections}
+        missing={missing}
+        onGenerateMissing={() => void completeWithAi(missing, "missing")}
         run={run}
         justCompleted={justCompleted}
         error={aiError}
@@ -798,43 +807,13 @@ export function ProductForm({
 
       {/* --------------------------------------------------- Specifications */}
       <section role="tabpanel" aria-label="Specifications" className={panel("Specifications")}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm text-ink-soft">Any specification you like. RAM and Storage specs also power the search filters.</p>
-          {v.specs.length === 0 ? (
-            <Button type="button" variant="outline" size="sm" onClick={() => set("specs", COMMON_SPECS.map(([group_name, name]) => ({ group_name, name, value: "" })))}>
-              Start with common phone specs
-            </Button>
-          ) : null}
-        </div>
-        <ul className="mt-4 space-y-2">
-          {v.specs.map((s, i) => (
-            <li key={i} className="grid gap-2 sm:grid-cols-[160px_200px_1fr_auto_auto]">
-              <input className="h-10 rounded-md border border-line-strong px-2.5 text-sm" placeholder="Group (Display)" value={s.group_name} onChange={(e) => set("specs", v.specs.map((x, n) => (n === i ? { ...x, group_name: e.target.value } : x)))} aria-label={`Spec ${i + 1} group`} />
-              <input className="h-10 rounded-md border border-line-strong px-2.5 text-sm" placeholder="Name (Size)" value={s.name} onChange={(e) => set("specs", v.specs.map((x, n) => (n === i ? { ...x, name: e.target.value } : x)))} aria-label={`Spec ${i + 1} name`} />
-              <input className="h-10 rounded-md border border-line-strong px-2.5 text-sm" placeholder="Value (6.7 inch)" value={s.value} onChange={(e) => set("specs", v.specs.map((x, n) => (n === i ? { ...x, value: e.target.value } : x)))} aria-label={`Spec ${i + 1} value`} />
-              <span className="flex w-24 items-center">
-                {isProtectedSpec(s.name) ? <span className="text-xs text-ink-mute">Set by you</span> : specOrigin(s, ai) === "ai" ? (
-                  <span title={specStatus(s.name)}>
-                    <AiTag origin="ai" /> <span className="text-xs text-ink-mute">{specStatus(s.name) === "VERIFIED" ? "verified" : "likely"}</span>
-                  </span>
-                ) : null}
-              </span>
-              <div className="flex">
-                <button type="button" className="rounded p-2 hover:bg-paper disabled:opacity-30" disabled={i === 0} onClick={() => { const s2 = [...v.specs]; [s2[i - 1], s2[i]] = [s2[i], s2[i - 1]]; set("specs", s2); }} aria-label="Move up">
-                  <ArrowUp className="h-4 w-4" />
-                </button>
-                <button type="button" className="rounded p-2 text-deal hover:bg-deal-tint" onClick={() => set("specs", v.specs.filter((_, n) => n !== i))} aria-label={`Remove spec ${i + 1}`}>
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-        <Button type="button" variant="outline" className="mt-3" onClick={() => set("specs", [...v.specs, { group_name: v.specs[v.specs.length - 1]?.group_name ?? "General", name: "", value: "" }])}>
-          <Plus className="h-4 w-4" aria-hidden />
-          Add specification
-        </Button>
-        <p className="mt-2 text-xs text-ink-mute">Rows with an empty name or value are skipped when saving.</p>
+        <SpecEditor
+          specs={v.specs}
+          onChange={(specs) => set("specs", specs)}
+          originOf={(row) => specOrigin(row, ai)}
+          statusOf={specStatus}
+          isProtected={isProtectedSpec}
+        />
 
         <h3 className="mt-8 flex items-center gap-2 font-semibold">
           Key features <AiTag origin={origin("features")} />

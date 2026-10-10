@@ -198,7 +198,9 @@ export async function runWithFailover(req: AiRequest, deps: RouterDeps): Promise
   const pool = deps.models.filter(
     (m) => (deps.onlyModelId ? m.id === deps.onlyModelId : m.isEnabled) && meetsRequirements(m, req.task),
   );
-  const eligible = orderModels(pool, deps.strategy);
+  const ordered = orderModels(pool, deps.strategy);
+  // A request that wants web research tries research-capable models first (same order within each group).
+  const eligible = req.research ? [...ordered.filter((m) => m.capabilities.includes("research")), ...ordered.filter((m) => !m.capabilities.includes("research"))] : ordered;
   if (eligible.length === 0) {
     return {
       ok: false,

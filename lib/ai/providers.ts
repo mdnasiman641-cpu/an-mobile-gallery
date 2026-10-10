@@ -106,7 +106,12 @@ async function callOpenAiStyle(model: AiModelConfig, req: AiRequest, fetchImpl: 
       { role: "user", content: userContent },
     ],
     // Search models don't accept response_format; ask for JSON in the prompt instead.
-    ...(req.json && !research ? { response_format: { type: "json_object" } } : {}),
+    // Schema-constrained output only where it is documented (OpenAI) and the admin marked the model "Structured output".
+    ...(req.json && !research
+      ? req.jsonSchema && model.providerType === "openai" && model.capabilities.includes("structured_output")
+        ? { response_format: { type: "json_schema", json_schema: { name: req.jsonSchema.name, schema: req.jsonSchema.schema, strict: false } } }
+        : { response_format: { type: "json_object" } }
+      : {}),
   };
   const data = (await postJson(`${base}/chat/completions`, { authorization: `Bearer ${model.apiKey ?? ""}` }, body, model, fetchImpl, req.minTimeoutMs)) as {
     choices?: { message?: { content?: string | null; annotations?: { type?: string; url_citation?: { url?: string; title?: string } }[] } }[];

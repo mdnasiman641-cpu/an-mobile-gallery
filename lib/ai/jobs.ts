@@ -2,7 +2,9 @@ import "server-only";
 import { aiDb } from "@/lib/ai/db";
 import { AiSetupError, runAi } from "@/lib/ai/engine";
 import { parseJsonObject } from "@/lib/ai/providers";
+import { AiProviderError } from "@/lib/ai/errors";
 import {
+  contentGaps,
   buildRequest,
   needsVerification,
   planMerge,
@@ -171,8 +173,12 @@ export async function processAiJob(jobId: string): Promise<JobOutcome> {
     const answer: { json: Record<string, unknown> | null } = { json: null };
     const result = await runAi(buildRequest(input, task, task === "verify" || task === "full"), {
       jobId: job.id,
+      // JSON that has none of the requested fields is not a success: try the next model.
       validate: (res) => {
-        answer.json = parseJsonObject(res.text);
+        const json = parseJsonObject(res.text);
+        const gaps = contentGaps(task, sanitizeContent(json, input, res.sources));
+        if (gaps.missing.length === gaps.requested.length) throw new AiProviderError("INVALID_RESPONSE", `The answer had none of the requested fields (${gaps.missing.join(", ")})`);
+        answer.json = json;
       },
     });
     const parsed = answer.json;
@@ -184,6 +190,7 @@ export async function processAiJob(jobId: string): Promise<JobOutcome> {
     }
 
     const content = sanitizeContent(parsed, input, result.response.sources);
+    const gaps = contentGaps(task, content);
     const findId = (list: { id: string; name: string }[], name: string | null) => (name ? (list.find((x) => x.name.toLowerCase() === name.toLowerCase())?.id ?? null) : null);
     const current: ProductSnapshot = {
       name: p.name,
@@ -246,7 +253,7 @@ export async function processAiJob(jobId: string): Promise<JobOutcome> {
         input_hash: hash,
         model: `${result.model.providerName} · ${result.model.modelName}`,
         generated_at: new Date().toISOString(),
-        review_status: needsVerification(merged) ? "needs_verification" : "ready",
+        review_status: needsVerification(merged) || gaps.missing.length ? "needs_verification" : "ready",
       })
       .eq("product_id", p.id);
     await finish("succeeded", {
@@ -255,6 +262,7 @@ export async function processAiJob(jobId: string): Promise<JobOutcome> {
       final_model_id: result.model.id,
       final_provider: result.model.providerName,
       final_model: result.model.modelName,
+      ...(gaps.missing.length ? { error_code: "PARTIAL", error_message: `Not filled by AI: ${gaps.missing.join(", ")}` } : {}),
     });
     if (p.status === "active" || p.status === "out_of_stock") {
       try {
@@ -265,7 +273,11 @@ export async function processAiJob(jobId: string): Promise<JobOutcome> {
     }
 
     const kept = plan.keptManual.length ? ` Kept your edits to: ${plan.keptManual.join(", ").replace(/_/g, " ")}.` : "";
-    return { ok: true, message: `AI content ready (${result.model.displayName}${result.fallbackUsed ? ", after failover" : ""}).${kept}`, jobId, keptManual: plan.keptManual };
+    const via = `${result.model.displayName}${result.fallbackUsed ? ", after failover" : ""}`;
+    if (gaps.missing.length) {
+      return { ok: true, message: `AI content partly ready (${via}). Not filled: ${gaps.missing.join(", ")} — run that part again.${kept}`, jobId, keptManual: plan.keptManual };
+    }
+    return { ok: true, message: `AI content ready (${via}).${kept}`, jobId, keptManual: plan.keptManual };
   } catch (e) {
     const message = e instanceof AiSetupError ? e.message : `AI job failed: ${(e as Error).message}`.slice(0, 1000);
     await client.from("ai_product_content").update({ review_status: "failed" }).eq("product_id", job.product_id);

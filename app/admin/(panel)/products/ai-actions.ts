@@ -7,7 +7,18 @@ import { AiSetupError, runAi } from "@/lib/ai/engine";
 import { AiProviderError, explainFailures } from "@/lib/ai/errors";
 import { parseJsonObject } from "@/lib/ai/providers";
 import { ALL_UNAVAILABLE_MESSAGE } from "@/lib/ai/router";
-import { buildCompletionRequest, COMPLETION_SECTIONS, mergeSections, sanitizeCompletion, type CompletionRun } from "@/lib/ai/product-completion";
+import {
+  buildCompletionRequest,
+  COMPLETION_SECTIONS,
+  evaluateCompletion,
+  fillGaps,
+  mergeSections,
+  SECTION_LABELS,
+  sanitizeCompletion,
+  type CompletionInput,
+  type CompletionRun,
+  type ProductCompletion,
+} from "@/lib/ai/product-completion";
 import { conditionFromName, conditionLabel } from "@/lib/utils";
 import type { ActionResult } from "@/types";
 
@@ -93,20 +104,29 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
     sections,
   };
 
+  const taxonomy = { brands, categories };
+  const facts = { name: input.name, ram: input.ram, storage: input.storage, condition: input.condition };
+  /** Parse + clean + judge one answer. An answer with none of the requested fields fails over to the next model. */
+  const readAnswer = (res: { text: string; sources: { url: string; title: string | null }[] }, req: CompletionInput) => {
+    const c = sanitizeCompletion(parseJsonObject(res.text), req, res.sources, taxonomy);
+    if (evaluateCompletion(c, facts).status === "failed") throw new AiProviderError("INVALID_RESPONSE", "The answer had none of the requested fields");
+    return c;
+  };
+
   try {
-    const answer: { json: Record<string, unknown> | null } = { json: null };
+    const answer: { completion: ProductCompletion | null } = { completion: null };
     const result = await runAi(buildCompletionRequest(completionInput), {
       jobId,
-      // An answer that isn't a JSON object counts as a failure, so the next model is tried.
+      // Not JSON, or JSON without any requested field, counts as a failure: the next model is tried.
       validate: (res) => {
-        answer.json = parseJsonObject(res.text);
+        answer.completion = readAnswer(res, completionInput);
       },
     });
     const tried = result.attempts.filter((a) => a.status !== "skipped");
     const chain = tried.map((a) => `${a.provider} / ${a.model}`).filter((m, i, all) => all.indexOf(m) === i);
     const skipped = result.attempts.filter((a) => a.status === "skipped").map((a) => `${a.provider} / ${a.model}: ${a.message ?? a.errorCode ?? "skipped"}`);
 
-    if (!result.ok || !answer.json) {
+    if (!result.ok || !answer.completion) {
       const failures = tried.filter((a) => a.status === "failed").map((a) => `${a.provider} / ${a.model}: ${a.errorCode}${a.httpStatus ? ` (${a.httpStatus})` : ""} ${a.message ?? ""}`.trim());
       await finish("failed", { attempts: result.attempts.length, error_code: result.ok ? "INVALID_RESPONSE" : result.code, error_message: (result.ok ? "The AI answer could not be read." : result.message).slice(0, 1000) });
       const noModels = !result.ok && result.code === "NO_ELIGIBLE_MODEL";
@@ -118,15 +138,49 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
       };
     }
 
-    const completion = sanitizeCompletion(answer.json, completionInput, result.response.sources, { brands, categories });
+    let completion = answer.completion;
+    let check = evaluateCompletion(completion, facts);
+    let usedModel = result.model;
+    let followUp = 0;
+
+    // The model answered but left required fields empty: ask once more, only for those
+    // sections, and keep everything that was already filled.
+    const retry = check.retrySections.filter((x) => sections.includes(x));
+    if (retry.length && check.status !== "failed") {
+      const retryInput: CompletionInput = { ...completionInput, sections: retry };
+      const second: { completion: ProductCompletion | null } = { completion: null };
+      const again = await runAi(buildCompletionRequest(retryInput), { jobId, validate: (res) => void (second.completion = readAnswer(res, retryInput)) });
+      followUp = again.attempts.filter((a) => a.status !== "skipped").length;
+      if (again.ok && second.completion) {
+        const extra = second.completion;
+        completion = { ...fillGaps(completion, extra), sections };
+        check = evaluateCompletion(completion, facts);
+        if (!check.retrySections.length) usedModel = again.model;
+      }
+    }
+
+    if (check.status === "failed") {
+      const missing = check.fields.filter((f) => f.state === "failed").map((f) => f.label);
+      await finish("failed", { attempts: result.attempts.length + followUp, error_code: "EMPTY_RESULT", error_message: `The AI answer had none of the requested fields: ${missing.join(", ")}`.slice(0, 1000) });
+      return { ok: false, message: `${usedModel.displayName} answered, but none of the requested fields could be used (${missing.join(", ")}). Nothing in the form was changed. Try again or use another model.` };
+    }
+
+    const researchCapable = usedModel.capabilities.includes("research");
+    const researchNote = completion.researched
+      ? null
+      : researchCapable
+        ? "Web search was allowed, but the model returned no sources for this product. Values are marked “likely”, not verified."
+        : `No web research: ${usedModel.displayName} has “Research (web)” turned off in Settings → AI, so values come from the model's own knowledge and are marked “likely”, not verified.`;
     const createdAt = new Date().toISOString();
     const run: CompletionRun = {
       completion,
-      usedModel: `${result.model.providerName} / ${result.model.modelName}`,
+      usedModel: `${usedModel.providerName} / ${usedModel.modelName}`,
       chain,
       skipped,
       fallbackUsed: result.fallbackUsed,
       createdAt,
+      check,
+      researchNote,
     };
 
     // Cache the result (not applied to the product). FAQ and keywords have no
@@ -143,23 +197,38 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
         };
     const prevCompletion = prev?.form_completion ?? null;
     // Regenerating one section keeps the other sections of the last result.
-    const cached: CompletionRun =
-      prevCompletion && sections.length < COMPLETION_SECTIONS.length
-        ? { ...run, completion: mergeSections(prevCompletion.completion, completion) }
-        : run;
+    const mergedCompletion: ProductCompletion | null = prevCompletion && sections.length < COMPLETION_SECTIONS.length ? mergeSections(prevCompletion.completion, completion) : null;
+    const cached: CompletionRun = mergedCompletion ? { ...run, completion: mergedCompletion, check: evaluateCompletion(mergedCompletion, facts) } : run;
     await supabase
       .from("ai_product_content")
       // a new row shows up in AI Products as "ready for review"; an existing row keeps its status
       .upsert({ product_id: input.productId, form_completion: cached, extras, ...(prev ? {} : { review_status: "ready", model: run.usedModel, generated_at: createdAt }) }, { onConflict: "product_id" });
 
+    const notFilled = check.fields.filter((f) => f.required && (f.state === "failed" || f.state === "partial"));
     await finish("succeeded", {
-      attempts: result.attempts.length,
+      attempts: result.attempts.length + followUp,
       fallback_used: result.fallbackUsed,
-      final_model_id: result.model.id,
-      final_provider: result.model.providerName,
-      final_model: result.model.modelName,
+      final_model_id: usedModel.id,
+      final_provider: usedModel.providerName,
+      final_model: usedModel.modelName,
+      ...(check.status === "partial" ? { error_code: "PARTIAL", error_message: `Incomplete: ${notFilled.map((f) => `${f.label} (${f.note ?? f.state})`).join("; ")}`.slice(0, 1000) } : {}),
     });
-    return { ok: true, message: "AI completed the product information. Please review before saving.", data: run };
+    if (check.status === "success") return { ok: true, message: "AI completed the product information. Please review before saving.", data: run };
+    const requestedCount = check.fields.filter((f) => f.required && f.state !== "skipped").length;
+    const failedNames = notFilled.filter((f) => f.state === "failed").map((f) => f.label);
+    const partialNames = notFilled.filter((f) => f.state === "partial").map((f) => f.label);
+    return {
+      ok: true,
+      message: [
+        `Partly completed: ${requestedCount - notFilled.length} of ${requestedCount} fields are complete.`,
+        failedNames.length ? `Not filled: ${failedNames.join(", ")}.` : "",
+        partialNames.length ? `Check: ${partialNames.join(", ")}.` : "",
+        `Review before saving${check.retrySections.length ? `, or retry ${check.retrySections.map((x) => SECTION_LABELS[x]).join(", ")}` : ""}.`,
+      ]
+        .filter(Boolean)
+        .join(" "),
+      data: run,
+    };
   } catch (e) {
     const message = e instanceof AiSetupError ? e.message : e instanceof AiProviderError ? e.message : "The AI request failed. Please try again.";
     await finish("failed", { error_code: e instanceof AiSetupError ? "SETUP" : "ERROR", error_message: message.slice(0, 1000) });

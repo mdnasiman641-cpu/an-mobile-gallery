@@ -1,4 +1,5 @@
 import type { AiRequest, AiSource } from "@/lib/ai/types";
+import { isMemorySizeName, normalizeAnswer, PHONE_SPECS, SPEC_GROUP_ORDER } from "@/lib/ai/spec-catalog";
 
 /**
  * AI product content: prompt, strict clean-up of the model's answer, and the
@@ -18,21 +19,13 @@ import type { AiRequest, AiSource } from "@/lib/ai/types";
 export const VERIFICATION = ["VERIFIED", "LIKELY", "UNKNOWN", "NEEDS_VERIFICATION"] as const;
 export type Verification = (typeof VERIFICATION)[number];
 
-export const SPEC_FIELDS = [
+/** RAM and storage (from the stock system or the admin) plus the shared phone spec list. */
+export const SPEC_FIELDS: { key: string; group: string; label: string; core: boolean }[] = [
   { key: "ram", group: "Memory", label: "RAM", core: true },
   { key: "storage", group: "Memory", label: "Storage", core: true },
-  { key: "display", group: "Display", label: "Display", core: true },
-  { key: "processor", group: "Performance", label: "Processor", core: true },
-  { key: "rear_camera", group: "Camera", label: "Rear camera", core: false },
-  { key: "front_camera", group: "Camera", label: "Front camera", core: false },
-  { key: "battery", group: "Battery", label: "Battery", core: true },
-  { key: "charging", group: "Battery", label: "Charging", core: false },
-  { key: "os", group: "Software", label: "Operating system", core: true },
-  { key: "network", group: "Connectivity", label: "Network", core: true },
-  { key: "sim", group: "Connectivity", label: "SIM", core: false },
-  { key: "colors", group: "Design", label: "Colours", core: false },
-] as const;
-export type SpecKey = (typeof SPEC_FIELDS)[number]["key"];
+  ...PHONE_SPECS.map((p) => ({ key: p.key, group: p.group, label: p.label, core: p.core })),
+];
+export type SpecKey = string;
 
 export interface SpecValue {
   value: string;
@@ -84,8 +77,8 @@ const NA = "Not Available";
 const NV = "Needs Verification";
 
 function str(v: unknown, max: number): string | null {
-  if (typeof v !== "string") return null;
-  const s = v.replace(/\s+\n/g, "\n").trim();
+  if (typeof v !== "string" && typeof v !== "number") return null;
+  const s = String(v).replace(/\s+\n/g, "\n").trim();
   if (!s) return null;
   return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s;
 }
@@ -135,9 +128,16 @@ function specValue(raw: unknown, hasEvidence: boolean): SpecValue {
 }
 
 /** Clean and constrain a model answer. Unknown keys are dropped. */
-export function sanitizeContent(raw: Record<string, unknown>, input: ProductAiInput, sources: AiSource[]): ProductAiContent {
+export function sanitizeContent(answer: Record<string, unknown>, input: ProductAiInput, sources: AiSource[]): ProductAiContent {
+  // Same tolerant reading as Complete with AI (aliases, wrapped answers, spec lists).
+  const raw = normalizeAnswer(answer);
   const hasEvidence = sources.length > 0;
-  const specsRaw = (raw.specs && typeof raw.specs === "object" ? raw.specs : {}) as Record<string, unknown>;
+  const specsRaw = { ...((raw.specs && typeof raw.specs === "object" ? raw.specs : {}) as Record<string, unknown>) };
+  // normalizeAnswer leaves RAM / storage out of the spec map; this pipeline reads them (stock data wins below)
+  const answerSpecs = (answer.specs ?? answer.specifications) as Record<string, unknown> | undefined;
+  if (answerSpecs && typeof answerSpecs === "object" && !Array.isArray(answerSpecs)) {
+    for (const [k, v] of Object.entries(answerSpecs)) if (isMemorySizeName(k) && !(k.toLowerCase() in specsRaw)) specsRaw[/^(ram|memory)$/i.test(k.trim()) ? "ram" : "storage"] = v;
+  }
   const specs: Partial<Record<SpecKey, SpecValue>> = {};
   for (const f of SPEC_FIELDS) if (f.key in specsRaw) specs[f.key] = specValue(specsRaw[f.key], hasEvidence);
 
@@ -190,11 +190,40 @@ export function sanitizeContent(raw: Record<string, unknown>, input: ProductAiIn
   };
 }
 
+/** Requested fields the answer left empty, by label. All of them empty = the answer is unusable. */
+export function contentGaps(task: ContentTask, c: ProductAiContent): { missing: string[]; requested: string[] } {
+  const usableSpecs = SPEC_FIELDS.filter((f) => f.key !== "ram" && f.key !== "storage").filter((f) => {
+    const sv = c.specs[f.key];
+    return sv && (sv.status === "VERIFIED" || sv.status === "LIKELY") && sv.value !== NA && sv.value !== NV;
+  }).length;
+  const checks: Record<string, boolean> = {
+    "Short description": Boolean(c.short_description),
+    Description: Boolean(c.description),
+    Highlights: c.highlights.length > 0,
+    "SEO title": Boolean(c.seo.title),
+    "SEO description": Boolean(c.seo.description),
+    Specifications: usableSpecs > 0,
+    FAQ: c.faq.length > 0,
+  };
+  const byTask: Record<ContentTask, string[]> = {
+    full: Object.keys(checks),
+    verify: ["Specifications"],
+    seo: ["SEO title", "SEO description"],
+    description: ["Short description", "Description", "Highlights"],
+    faq: ["FAQ"],
+    improve: ["Short description", "Description"],
+  };
+  const requested = byTask[task];
+  return { requested, missing: requested.filter((k) => !checks[k]) };
+}
+
 export function needsVerification(c: ProductAiContent): boolean {
-  return SPEC_FIELDS.filter((f) => f.core).some((f) => {
-    const s = c.specs[f.key]?.status;
-    return s !== "VERIFIED" && s !== "LIKELY";
-  });
+  const ok = (key: string) => {
+    const s = c.specs[key]?.status;
+    return s === "VERIFIED" || s === "LIKELY";
+  };
+  // core specs, plus the chip under either name (chipset or processor)
+  return SPEC_FIELDS.filter((f) => f.core).some((f) => !ok(f.key)) || !(ok("chipset") || ok("processor"));
 }
 
 const SYSTEM = `You write product content for AN MOBILE GALLERY, a mobile phone shop in Bangladesh.
@@ -206,6 +235,7 @@ Rules you must follow:
 - Write plain, clear English for Bangladeshi shoppers. No hype, no emojis.
 - Reply with ONE JSON object only.`;
 
+const SPEC_KEYS = SPEC_FIELDS.map((f) => f.key);
 const SCHEMA = `{
   "title": "full product title, e.g. Samsung Galaxy S25 Ultra 12GB/256GB",
   "short_title": "e.g. Galaxy S25 Ultra",
@@ -213,11 +243,7 @@ const SCHEMA = `{
   "description": "2-4 short paragraphs; use '- ' bullet lines for key points",
   "highlights": ["3 to 6 short highlights"],
   "model": "model name or number if known",
-  "specs": {
-    "ram": {"value": "", "status": "VERIFIED|LIKELY|UNKNOWN|NEEDS_VERIFICATION", "source": "url or null"},
-    "storage": {...}, "display": {...}, "processor": {...}, "rear_camera": {...}, "front_camera": {...},
-    "battery": {...}, "charging": {...}, "os": {...}, "network": {...}, "sim": {...}, "colors": {...}
-  },
+  "specs": {"<key>": {"value": "", "status": "VERIFIED|LIKELY|UNKNOWN|NEEDS_VERIFICATION", "source": "url or null"}, "...": "one entry per key: ${SPEC_KEYS.join(", ")}"},
   "seo": {"title": "max 60 characters", "description": "max 155 characters", "keywords": ["..."]},
   "suggested_brand": "one of the brand options or null",
   "suggested_category": "one of the category options or null",
@@ -225,7 +251,10 @@ const SCHEMA = `{
   "tags": ["short tags"],
   "search_attributes": ["e.g. 5G, 12GB RAM, 256GB"],
   "review_summary": "only if reviews are provided, else null"
-}`;
+}
+
+Specification keys:
+${PHONE_SPECS.map((p) => `- ${p.key}: ${p.label} — ${p.hint}`).join("\n")}`;
 
 const TASK_NOTES: Record<ContentTask, string> = {
   full: "Generate all fields.",
@@ -260,7 +289,7 @@ export function buildRequest(input: ProductAiInput, task: ContentTask, research:
     prompt: `Task: ${TASK_NOTES[task]}\n\nProduct facts (JSON):\n${JSON.stringify(facts, null, 1)}\n\nReturn JSON in exactly this shape:\n${SCHEMA}`,
     json: true,
     research,
-    maxOutputTokens: 4096,
+    // No low output cap: on "thinking" models the thinking counts against it and the JSON was cut off.
   };
 }
 
@@ -354,6 +383,16 @@ export function planMerge(
   };
   const plan: MergePlan = { update: {}, features: null, specs: null, applied: { ...applied }, keptManual: [] };
   for (const field of TASK_FIELDS[task]) {
+    if (field === "specs") {
+      // Row by row: rows the admin added or edited stay; AI rows are added or refreshed.
+      const ai = proposed.specs as ProductSnapshot["specs"] | null;
+      if (!ai) continue;
+      const merged = mergeSpecRows(current.specs, (applied.specs as ProductSnapshot["specs"] | undefined) ?? [], ai, replaceManual);
+      plan.keptManual.push(...(merged.kept.length ? (["specs"] as TrackedField[]) : []));
+      if (norm(merged.rows) !== norm(current.specs)) plan.specs = merged.rows;
+      plan.applied.specs = ai;
+      continue;
+    }
     const value = proposed[field];
     if (value === null || value === undefined || (typeof value === "string" && value.length < 2)) continue;
     if (field === "name" && typeof value === "string" && value.length > 200) continue;
@@ -366,9 +405,52 @@ export function planMerge(
       continue;
     }
     if (field === "features") plan.features = value as string[];
-    else if (field === "specs") plan.specs = value as ProductSnapshot["specs"];
     else (plan.update as Record<string, unknown>)[field] = value;
     plan.applied[field] = value;
   }
   return plan;
+}
+
+const rowKey = (name: string) => name.trim().toLowerCase();
+
+/**
+ * Merge AI specification rows into the product's rows without losing the
+ * admin's: a row counts as the admin's when AI never wrote it or its value was
+ * changed since. Those are kept (unless replaceManual); AI rows are added or
+ * refreshed. Result is ordered by group (General, Display, …) then original order.
+ */
+export function mergeSpecRows(
+  current: ProductSnapshot["specs"],
+  previousAi: ProductSnapshot["specs"],
+  ai: ProductSnapshot["specs"],
+  replaceManual: boolean,
+): { rows: ProductSnapshot["specs"]; kept: string[] } {
+  const prev = new Map(previousAi.map((r) => [rowKey(r.name), r.value.trim()]));
+  const proposed = new Map(ai.map((r) => [rowKey(r.name), r]));
+  const kept: string[] = [];
+  const rows: ProductSnapshot["specs"] = [];
+  const seen = new Set<string>();
+  for (const r of current) {
+    const k = rowKey(r.name);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const p = proposed.get(k);
+    const mine = !prev.has(k) || prev.get(k) !== r.value.trim();
+    if (!p) {
+      // AI no longer proposes it: drop only rows AI wrote and nobody changed
+      if (mine || isMemorySizeName(r.name)) rows.push(r);
+      continue;
+    }
+    if (mine && r.value.trim() && !replaceManual && p.value.trim() !== r.value.trim()) {
+      kept.push(r.name);
+      rows.push(r);
+    } else rows.push({ ...r, value: p.value });
+  }
+  for (const p of ai) if (!seen.has(rowKey(p.name))) rows.push(p);
+  const rank = (g: string) => {
+    const i = SPEC_GROUP_ORDER.indexOf(g);
+    return i < 0 ? SPEC_GROUP_ORDER.length : i;
+  };
+  const ordered = rows.map((r, i) => ({ r, i })).sort((a, b) => rank(a.r.group_name) - rank(b.r.group_name) || a.i - b.i).map((x) => x.r);
+  return { rows: ordered, kept };
 }

@@ -117,6 +117,11 @@ export interface AiRequest {
   prompt: string;
   /** Ask for a JSON object back. */
   json: boolean;
+  /**
+   * Optional JSON Schema for providers that support schema-constrained output
+   * (sent only to OpenAI models marked "Structured output"; others get plain JSON mode).
+   */
+  jsonSchema?: { name: string; schema: Record<string, unknown> };
   /** Let research-capable models search the web (Gemini grounding / OpenAI search models). */
   research?: boolean;
   /** Public image URLs (only sent to vision-capable models). */

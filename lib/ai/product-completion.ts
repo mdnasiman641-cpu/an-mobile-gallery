@@ -1,4 +1,5 @@
 import { stripPriceAndRatingSentences, VERIFICATION, type Verification } from "@/lib/ai/product-content";
+import { normalizeAnswer, PHONE_SPECS } from "@/lib/ai/spec-catalog";
 import { slugify } from "@/lib/slug";
 import type { AiRequest, AiSource } from "@/lib/ai/types";
 
@@ -33,36 +34,9 @@ export const SECTION_LABELS: Record<CompletionSection, string> = {
   faq: "FAQ",
 };
 
-/** Specifications AI is asked for, in display order. RAM and storage come from the admin. */
-export const COMPLETION_SPECS = [
-  { key: "display_type", group: "Display", label: "Display" },
-  { key: "display_size", group: "Display", label: "Size" },
-  { key: "resolution", group: "Display", label: "Resolution" },
-  { key: "refresh_rate", group: "Display", label: "Refresh rate" },
-  { key: "chipset", group: "Performance", label: "Chipset" },
-  { key: "processor", group: "Performance", label: "Processor" },
-  { key: "gpu", group: "Performance", label: "GPU" },
-  { key: "expandable_storage", group: "Memory", label: "Expandable storage" },
-  { key: "rear_camera", group: "Camera", label: "Rear camera" },
-  { key: "front_camera", group: "Camera", label: "Front camera" },
-  { key: "video_recording", group: "Camera", label: "Video recording" },
-  { key: "battery", group: "Battery", label: "Battery" },
-  { key: "charging", group: "Battery", label: "Charging" },
-  { key: "os", group: "Software", label: "Operating system" },
-  { key: "network", group: "Connectivity", label: "Network" },
-  { key: "sim", group: "Connectivity", label: "SIM" },
-  { key: "wifi", group: "Connectivity", label: "Wi-Fi" },
-  { key: "bluetooth", group: "Connectivity", label: "Bluetooth" },
-  { key: "nfc", group: "Connectivity", label: "NFC" },
-  { key: "usb", group: "Connectivity", label: "USB" },
-  { key: "gps", group: "Connectivity", label: "GPS" },
-  { key: "sensors", group: "Features", label: "Sensors" },
-  { key: "biometrics", group: "Features", label: "Security / biometrics" },
-  { key: "dimensions", group: "Body", label: "Dimensions" },
-  { key: "weight", group: "Body", label: "Weight" },
-  { key: "colors", group: "Body", label: "Colours" },
-] as const;
-export type CompletionSpecKey = (typeof COMPLETION_SPECS)[number]["key"];
+/** Specifications AI is asked for, in display order (lib/ai/spec-catalog.ts). RAM and storage come from the admin. */
+export const COMPLETION_SPECS = PHONE_SPECS.map((p) => ({ key: p.key, group: p.group, label: p.label }));
+export type CompletionSpecKey = string;
 
 /** Spec rows the admin owns (typed in the quick fields). AI never writes these. */
 export const RAM_SPEC = { group_name: "Memory", name: "RAM" } as const;
@@ -127,6 +101,10 @@ export interface CompletionRun {
   skipped: string[];
   fallbackUsed: boolean;
   createdAt: string;
+  /** Field-level outcome of this run (older cached runs don't have it; the form recomputes it). */
+  check?: CompletionCheck;
+  /** Why no web research happened, when it didn't. */
+  researchNote?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,17 +113,21 @@ export interface CompletionRun {
 
 const SYSTEM = `You complete product listings for AN MOBILE GALLERY, a mobile phone shop in Bangladesh.
 Rules you must follow:
-- Never invent anything. If you are not sure of a value, leave "value" empty and set "status" to "UNKNOWN" (or "NEEDS_VERIFICATION" with your best guess in "value" if it must be checked).
-- "VERIFIED": confirmed from the official manufacturer page or a reliable specification source you can cite in "source" (a URL). "LIKELY": widely documented for this exact model and variant, but no source at hand.
-- Prefer the official manufacturer source, then reliable specification databases, then other reputable sources. Do not trust a single unreliable source.
+- Identify the EXACT device first: brand, official model name and the variant given by the shop (RAM / storage). Do not mix it up with similar models (Pro / Plus / Ultra / Lite, 4G vs 5G, a different year) or regional versions.
+- When you can search the web: prefer the manufacturer's official product or specification page, then official support pages, then reliable specification databases. Use a source only if it is about this exact model and variant, and put its URL in "source". Never invent or guess a URL.
+- "VERIFIED": confirmed by a source you cite in "source". "LIKELY": widely documented for this exact model, no source at hand. "NEEDS_VERIFICATION": your best guess, put it in "value". "UNKNOWN": you don't know — leave "value" empty.
+- Fill every specification you know for this exact model. Leave a field empty only when you don't know it or it doesn't apply (e.g. no telephoto camera). For NFC, wireless charging, memory card and water resistance write "No" when the phone doesn't have it.
 - RAM and storage are given by the shop and are final. Do not change or question them.
-- Never mention, estimate or invent prices, discounts, EMI, offers, costs, stock, delivery, ratings, stars, reviews, testimonials or customer names.
+- Condition is given by the shop. Write the text for that condition (a used phone is not "brand new").
+- Never mention, estimate or invent prices, discounts, EMI, offers, costs, stock, delivery, return policy, ratings, stars, reviews, testimonials or customer names.
 - Model numbers, MPN, barcodes (GTIN/EAN/UPC) and warranty: only when VERIFIED with a source URL. Otherwise leave them empty.
+- Every text (descriptions, highlights, SEO, FAQ) must be about this exact model and variant, based on the specifications. Name the model in the short description, description, SEO title and SEO description. No keyword stuffing.
 - FAQ answers may only use facts you are confident about. Do not write FAQs about price, EMI, warranty, stock or delivery.
 - Write plain, clear English for Bangladeshi shoppers in your own words. Do not copy text from websites. No hype, no emojis.
-- Reply with ONE JSON object only.`;
+- Reply with ONE JSON object only, no markdown, no text before or after it.`;
 
 const g = `{"value": "", "status": "VERIFIED|LIKELY|UNKNOWN|NEEDS_VERIFICATION", "source": "url or null"}`;
+const SPEC_GUIDE = PHONE_SPECS.map((s) => `- ${s.key}: ${s.label} (${s.group}) — ${s.hint}`).join("\n");
 const SCHEMA = `{
   "brand": "one of brand_options if it matches, otherwise the real brand name, or null",
   "category": "one of category_options, or null",
@@ -153,14 +135,12 @@ const SCHEMA = `{
   "model_number": ${g},
   "barcode": ${g},
   "warranty": ${g},
-  "specs": {
-${COMPLETION_SPECS.map((s) => `    "${s.key}": ${g}`).join(",\n")}
-  },
-  "other_specs": [{"name": "e.g. Water resistance", "value": "", "status": "...", "source": null}],
-  "short_description": "one or two sentences, max 300 characters",
+  "specs": {"<spec key from the list below>": ${g}, "...": "one entry per spec key"},
+  "other_specs": [{"name": "another useful specification", "group": "Display|Performance|Camera|Battery|Connectivity|Physical|Features", "value": "", "status": "...", "source": null}],
+  "short_description": "one or two sentences, 120-300 characters, names the model",
   "description": "3-5 short paragraphs, then '## Main features' with '- ' bullet lines, then '## Why buy it' with '- ' bullet lines",
   "highlights": ["4 to 6 short key highlights"],
-  "seo": {"title": "max 60 characters", "description": "max 155 characters", "keywords": ["5 to 12 search keywords"]},
+  "seo": {"title": "max 60 characters, brand + model + variant", "description": "120-155 characters", "keywords": ["5 to 12 relevant search keywords"]},
   "faq": [{"q": "", "a": ""}]
 }`;
 
@@ -170,6 +150,36 @@ const SECTION_NOTES: Record<CompletionSection, string> = {
   description: "short_description, description, highlights",
   seo: "seo",
   faq: "faq (4-6 useful questions a buyer would ask about this exact phone)",
+};
+
+const nullableString = { type: ["string", "null"] };
+const guessSchema = {
+  type: "object",
+  properties: { value: nullableString, status: { type: "string", enum: [...VERIFICATION] }, source: nullableString },
+  required: ["value", "status", "source"],
+};
+/** The answer shape as JSON Schema (used where the provider supports schema-constrained output). */
+export const COMPLETION_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    brand: nullableString,
+    category: nullableString,
+    model: guessSchema,
+    model_number: guessSchema,
+    barcode: guessSchema,
+    warranty: guessSchema,
+    specs: { type: "object", properties: Object.fromEntries(PHONE_SPECS.map((s) => [s.key, guessSchema])) },
+    other_specs: {
+      type: "array",
+      items: { type: "object", properties: { name: { type: "string" }, group: { type: "string" }, value: nullableString, status: { type: "string" }, source: nullableString }, required: ["name", "value", "status"] },
+    },
+    short_description: nullableString,
+    description: nullableString,
+    highlights: { type: "array", items: { type: "string" } },
+    seo: { type: "object", properties: { title: nullableString, description: nullableString, keywords: { type: "array", items: { type: "string" } } } },
+    faq: { type: "array", items: { type: "object", properties: { q: { type: "string" }, a: { type: "string" } }, required: ["q", "a"] } },
+  },
+  required: ["brand", "category", "model", "specs", "short_description", "description", "highlights", "seo", "faq"],
 };
 
 export function buildCompletionRequest(input: CompletionInput): AiRequest {
@@ -189,8 +199,9 @@ export function buildCompletionRequest(input: CompletionInput): AiRequest {
   return {
     task: "product_content",
     system: SYSTEM,
-    prompt: `Research this phone and complete its listing. ${focus}\n\nShop data (JSON):\n${JSON.stringify(facts, null, 1)}\n\nReturn JSON in exactly this shape:\n${SCHEMA}`,
+    prompt: `Research this phone and complete its listing. ${focus}\n\nShop data (JSON):\n${JSON.stringify(facts, null, 1)}\n\nReturn JSON in exactly this shape:\n${SCHEMA}\n\nSpecification keys:\n${SPEC_GUIDE}`,
     json: true,
+    jsonSchema: { name: "product_listing", schema: COMPLETION_JSON_SCHEMA },
     research: true,
     // a full listing is a long answer (and may include a web search)
     minTimeoutMs: 90_000,
@@ -234,10 +245,10 @@ const isUrl = (s: string | null): s is string => Boolean(s && /^https?:\/\/[^\s]
  * VERIFIED (it is capped at LIKELY), whatever the model claims.
  */
 function guess(raw: unknown, researched: boolean, max = 200): Guess {
-  const o = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : { value: raw, status: raw ? "LIKELY" : "UNKNOWN" }) as { value?: unknown; status?: unknown; source?: unknown };
-  let value = str(o.value, max);
+  const o = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : { value: raw, status: raw ? "LIKELY" : "UNKNOWN" }) as { value?: unknown; status?: unknown; source?: unknown; source_url?: unknown };
+  let value = str(Array.isArray(o.value) ? o.value.filter((x) => typeof x === "string").join(", ") : o.value, max);
   let st = status(o.status);
-  const source = str(o.source, 500);
+  const source = str(o.source ?? o.source_url, 500);
   if (!value || NOT_A_VALUE.test(value) || MONEY_OR_REVIEWS.test(value)) {
     value = null;
     if (st === "VERIFIED" || st === "LIKELY") st = "UNKNOWN";
@@ -255,17 +266,30 @@ export function validGtin(code: string): boolean {
   return (10 - (sum % 10)) % 10 === check;
 }
 
-const matchOption = (name: string | null, options: { id: string; name: string }[]) =>
-  name ? (options.find((o) => o.name.trim().toLowerCase() === name.trim().toLowerCase()) ?? null) : null;
+const squashName = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, "").replace(/(inc|ltd|co|corp|corporation|electronics|mobile|mobiles)$/, "");
+const singular = (v: string) => v.replace(/(ies)$/, "y").replace(/s$/, "");
+/** "Apple Inc." → Apple, "smartphone" → Smartphones; never a loose guess between unrelated names. */
+function matchOption(name: string | null, options: { id: string; name: string }[]) {
+  if (!name) return null;
+  const n = squashName(name);
+  if (!n) return null;
+  return (
+    options.find((o) => o.name.trim().toLowerCase() === name.trim().toLowerCase()) ??
+    options.find((o) => squashName(o.name) === n) ??
+    options.find((o) => singular(squashName(o.name)) === singular(n)) ??
+    null
+  );
+}
 
 const BAD_FAQ = /\b(price|cost|emi|instal?ment|discount|offer|warranty|guarantee|stock|available|availability|deliver|shipping|rating|review)\b/i;
 
 export function sanitizeCompletion(
-  raw: Record<string, unknown>,
+  answer: Record<string, unknown>,
   input: CompletionInput,
   sources: AiSource[],
   taxonomy: { brands: { id: string; name: string }[]; categories: { id: string; name: string }[] },
 ): ProductCompletion {
+  const raw = normalizeAnswer(answer);
   const researched = sources.length > 0;
   const want = new Set(input.sections);
 
@@ -285,12 +309,13 @@ export function sanitizeCompletion(
   const specs: CompletionSpec[] = COMPLETION_SPECS.map((f) => ({ key: f.key, group: f.group, label: f.label, ...guess(specsRaw[f.key], researched) }));
   if (Array.isArray(raw.other_specs)) {
     const taken = new Set(COMPLETION_SPECS.map((s) => s.label.toLowerCase()));
-    for (const o of raw.other_specs.slice(0, 12)) {
+    for (const o of raw.other_specs.slice(0, 16)) {
       const name = str((o as { name?: unknown } | null)?.name, 60);
       if (!name || taken.has(name.toLowerCase()) || isProtectedSpec(name) || MONEY_OR_REVIEWS.test(name)) continue;
       taken.add(name.toLowerCase());
-      specs.push({ key: `other:${name.toLowerCase()}`, group: "Other", label: name, ...guess(o, researched) });
-      if (specs.length >= COMPLETION_SPECS.length + 8) break;
+      const group = str((o as { group?: unknown } | null)?.group, 40);
+      specs.push({ key: `other:${name.toLowerCase()}`, group: group && !MONEY_OR_REVIEWS.test(group) ? group : "Other", label: name, ...guess(o, researched) });
+      if (specs.length >= COMPLETION_SPECS.length + 12) break;
     }
   }
 
@@ -666,5 +691,194 @@ export function unappliedFields(current: FormContent, proposed: AiFormValues): s
       if (missing.length) out.push(FIELD_LABELS.specs);
     } else if (isEmpty(current[f])) out.push(FIELD_LABELS[f]);
   }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Field-level result: what was really filled (not just "the model answered")
+// ---------------------------------------------------------------------------
+
+export type FieldState = "pending" | "generating" | "success" | "partial" | "failed" | "skipped";
+export type ResultField =
+  | "brand"
+  | "category"
+  | "model"
+  | "specs"
+  | "short_description"
+  | "description"
+  | "highlights"
+  | "seo_title"
+  | "seo_description"
+  | "keywords"
+  | "faq";
+
+export const RESULT_FIELDS: { key: ResultField; label: string; section: CompletionSection; required: boolean }[] = [
+  { key: "brand", label: "Brand", section: "basic", required: true },
+  { key: "model", label: "Model", section: "basic", required: true },
+  { key: "category", label: "Category", section: "basic", required: false },
+  { key: "specs", label: "Specifications", section: "specs", required: true },
+  { key: "short_description", label: "Short description", section: "description", required: true },
+  { key: "description", label: "Full description", section: "description", required: true },
+  { key: "highlights", label: "Highlights", section: "description", required: true },
+  { key: "seo_title", label: "SEO title", section: "seo", required: true },
+  { key: "seo_description", label: "SEO description", section: "seo", required: true },
+  { key: "keywords", label: "Search keywords", section: "seo", required: false },
+  { key: "faq", label: "FAQ", section: "faq", required: true },
+];
+
+export interface FieldResult {
+  key: ResultField;
+  label: string;
+  section: CompletionSection;
+  required: boolean;
+  state: FieldState;
+  note: string | null;
+}
+
+export interface CompletionCheck {
+  /** success: every requested required field is filled and passed the checks. */
+  status: "success" | "partial" | "failed";
+  fields: FieldResult[];
+  /** Sections with required fields that came back empty (offered for "Retry failed fields"). */
+  retrySections: CompletionSection[];
+}
+
+/** Enough specifications for a full listing (out of ~37 the model is asked for). */
+export const SPECS_FOR_SUCCESS = 12;
+
+/** Tokens that identify the model in a name: "Redmi 15" → ["15"], "Galaxy S25 Ultra 12GB" → ["S25"]. */
+export function modelTokens(name: string): string[] {
+  return name
+    .split(/[^A-Za-z0-9]+/)
+    .filter((t) => /\d/.test(t) && !/^\d+(gb|tb|mb)$/i.test(t) && !/^[2-5]g$/i.test(t) && !/^\d{4,}$/.test(t))
+    .slice(0, 3);
+}
+
+const hasToken = (textValue: string, token: string) => new RegExp(`(^|[^a-z0-9])${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i").test(textValue);
+const sizeNumber = (v: string) => /(\d+(?:\.\d+)?)\s*(gb|tb)?/i.exec(v)?.[1] ?? null;
+
+/** Problems in a generated text: wrong model, other RAM/storage, wrong condition. */
+function textProblems(value: string, facts: { name: string; ram: string; storage: string; condition: string }): string[] {
+  const out: string[] = [];
+  const tokens = modelTokens(facts.name);
+  if (tokens.length && !tokens.some((t) => hasToken(value, t))) out.push(`doesn't name the model (${tokens.join(" ")})`);
+  const ram = sizeNumber(facts.ram);
+  for (const m of value.matchAll(/(\d+(?:\.\d+)?)\s*GB\s*(?:of\s+)?RAM/gi)) if (ram && m[1] !== ram) out.push(`mentions ${m[1]}GB RAM (you entered ${facts.ram})`);
+  const storage = sizeNumber(facts.storage);
+  for (const m of value.matchAll(/(\d+(?:\.\d+)?)\s*(GB|TB)\s*(?:of\s+)?(?:internal\s+)?(?:storage|ROM)/gi)) if (storage && m[1] !== storage) out.push(`mentions ${m[1]}${m[2].toUpperCase()} storage (you entered ${facts.storage})`);
+  if (facts.condition !== "new" && /\b(brand[- ]new|new condition|out[- ]of[- ]the[- ]box|sealed)\b/i.test(value)) out.push(`describes it as new (Condition is ${facts.condition})`);
+  return Array.from(new Set(out));
+}
+
+/** Judge each requested field. A run is only "success" when nothing required is missing. */
+export function evaluateCompletion(c: ProductCompletion, facts: { name: string; ram: string; storage: string; condition: string }): CompletionCheck {
+  const asked = new Set(c.sections);
+  const fields: FieldResult[] = RESULT_FIELDS.map((f) => {
+    const r = (state: FieldState, note: string | null = null): FieldResult => ({ ...f, state, note });
+    if (!asked.has(f.section)) return r("skipped");
+    const textField = (value: string | null, min: number): FieldResult => {
+      if (!value) return r("failed", "empty");
+      const problems = textProblems(value, facts);
+      if (value.length < min) problems.unshift("too short");
+      return problems.length ? r("partial", problems.join("; ")) : r("success");
+    };
+    switch (f.key) {
+      case "brand":
+        return c.brand?.id ? r("success") : c.brand ? r("partial", `“${c.brand.name}” isn't in your brand list`) : r("failed", "not identified");
+      case "category":
+        return c.category?.id ? r("success") : c.category ? r("partial", `suggested “${c.category.name}”, which isn't in your category list`) : r("failed", "no matching category");
+      case "model":
+        if (c.model?.value && (c.model.status === "VERIFIED" || c.model.status === "LIKELY")) return r("success");
+        return c.model?.value ? r("partial", "needs verification") : r("failed", "not identified");
+      case "specs": {
+        const n = c.specs.filter((s) => s.value && (s.status === "VERIFIED" || s.status === "LIKELY") && !isProtectedSpec(s.label)).length;
+        if (n === 0) return r("failed", "no usable specifications");
+        const verified = c.specs.filter((s) => s.value && s.status === "VERIFIED").length;
+        const note = `${n} filled${verified ? `, ${verified} verified from sources` : ""}`;
+        return n >= SPECS_FOR_SUCCESS ? r("success", note) : r("partial", `${note} (expected at least ${SPECS_FOR_SUCCESS})`);
+      }
+      case "short_description":
+        return textField(c.shortDescription, 40);
+      case "description":
+        return textField(c.description, 250);
+      case "highlights":
+        return c.highlights.length === 0 ? r("failed", "empty") : c.highlights.length < 3 ? r("partial", `only ${c.highlights.length}`) : r("success");
+      case "seo_title":
+        return textField(c.seo.title, 15);
+      case "seo_description":
+        return textField(c.seo.description, 50);
+      case "keywords":
+        return c.seo.keywords.length === 0 ? r("failed", "empty") : c.seo.keywords.length < 3 ? r("partial", `only ${c.seo.keywords.length}`) : r("success");
+      case "faq":
+        return c.faq.length === 0 ? r("failed", "empty") : c.faq.length < 3 ? r("partial", `only ${c.faq.length} question${c.faq.length === 1 ? "" : "s"}`) : r("success");
+    }
+  });
+  const requested = fields.filter((f) => f.state !== "skipped");
+  const required = requested.filter((f) => f.required);
+  const anyUsable = requested.some((f) => f.state === "success" || f.state === "partial");
+  const status: CompletionCheck["status"] = required.every((f) => f.state === "success") ? "success" : anyUsable ? "partial" : "failed";
+  const retrySections = Array.from(new Set(required.filter((f) => f.state === "failed").map((f) => f.section)));
+  return { status, fields, retrySections };
+}
+
+/**
+ * Fill the gaps of a first answer with a follow-up answer. Nothing that was
+ * already filled is replaced.
+ */
+export function fillGaps(prev: ProductCompletion, next: ProductCompletion): ProductCompletion {
+  const usableGuess = (x: Guess | null) => Boolean(x?.value && (x.status === "VERIFIED" || x.status === "LIKELY"));
+  const specs = prev.specs.map((s) => {
+    if (s.value && (s.status === "VERIFIED" || s.status === "LIKELY")) return s;
+    const n = next.specs.find((x) => x.key === s.key);
+    return n && n.value && (n.status === "VERIFIED" || n.status === "LIKELY" || !s.value) ? n : s;
+  });
+  for (const n of next.specs) if (!specs.some((s) => s.key === n.key || s.label.toLowerCase() === n.label.toLowerCase())) specs.push(n);
+  const urls = new Set(prev.sources.map((x) => x.url));
+  return {
+    sections: Array.from(new Set([...prev.sections, ...next.sections])),
+    brand: prev.brand?.id ? prev.brand : (next.brand ?? prev.brand),
+    category: prev.category?.id ? prev.category : (next.category ?? prev.category),
+    model: usableGuess(prev.model) ? prev.model : (next.model ?? prev.model),
+    mpn: prev.mpn?.status === "VERIFIED" ? prev.mpn : (next.mpn ?? prev.mpn),
+    barcode: prev.barcode?.status === "VERIFIED" ? prev.barcode : (next.barcode ?? prev.barcode),
+    warranty: prev.warranty?.status === "VERIFIED" ? prev.warranty : (next.warranty ?? prev.warranty),
+    specs,
+    shortDescription: prev.shortDescription ?? next.shortDescription,
+    description: prev.description ?? next.description,
+    highlights: prev.highlights.length >= 3 ? prev.highlights : next.highlights.length > prev.highlights.length ? next.highlights : prev.highlights,
+    seo: {
+      title: prev.seo.title ?? next.seo.title,
+      description: prev.seo.description ?? next.seo.description,
+      keywords: prev.seo.keywords.length >= 3 ? prev.seo.keywords : next.seo.keywords.length > prev.seo.keywords.length ? next.seo.keywords : prev.seo.keywords,
+      slug: prev.seo.slug ?? next.seo.slug,
+    },
+    faq: prev.faq.length >= 3 ? prev.faq : next.faq.length > prev.faq.length ? next.faq : prev.faq,
+    sources: [...prev.sources, ...next.sources.filter((x) => !urls.has(x.url))].slice(0, 20),
+    researched: prev.researched || next.researched,
+  };
+}
+
+/** "Generate all missing fields": only fields that are empty in the form (and spec rows not there yet). */
+export function onlyEmptyFields(current: FormContent, proposed: AiFormValues): AiFormValues {
+  const out: AiFormValues = {};
+  for (const f of AI_FIELDS) {
+    const value = proposed[f];
+    if (value === undefined) continue;
+    if (f === "specs") {
+      const add = (value as SpecRow[]).filter((p) => !current.specs.some((r) => specKey(r.name) === specKey(p.name) && r.value.trim() !== ""));
+      if (add.length) out.specs = add;
+    } else if (isEmpty(current[f])) (out as Record<string, unknown>)[f] = value;
+  }
+  return out;
+}
+
+/** Sections that still have empty fields in the form (what "Generate all missing fields" asks for). */
+export function missingSections(current: FormContent, faqCount: number): CompletionSection[] {
+  const out: CompletionSection[] = [];
+  if (!current.brand_id || !current.model.trim()) out.push("basic");
+  if (current.specs.filter((r) => !isProtectedSpec(r.name) && r.value.trim()).length < SPECS_FOR_SUCCESS) out.push("specs");
+  if (!current.short_description.trim() || !current.description.trim() || current.features.length === 0) out.push("description");
+  if (!current.meta_title.trim() || !current.meta_description.trim()) out.push("seo");
+  if (faqCount < 3) out.push("faq");
   return out;
 }
