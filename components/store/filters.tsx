@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useCallback, useRef, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { SlidersHorizontal, X } from "lucide-react";
 import type { FilterOptions } from "@/types";
+import { OverlayPortal, useModalOverlay } from "@/components/ui/overlay";
 import { cn, conditionLabel } from "@/lib/utils";
 import { SORT_LABELS } from "@/lib/listing";
 
@@ -273,12 +274,10 @@ export function MobileFilterButton({ options, hideBrand, basePath }: { options: 
   const searchParams = useSearchParams();
   const activeCount = ["brand", "ram", "storage", "condition", "min", "max", "stock"].filter((k) => searchParams.get(k)).length;
 
-  useEffect(() => {
-    document.body.style.overflow = open ? "hidden" : "";
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  useModalOverlay(open, close, dialogRef, { initialFocus: closeButtonRef });
 
   return (
     <>
@@ -294,12 +293,14 @@ export function MobileFilterButton({ options, hideBrand, basePath }: { options: 
         ) : null}
       </button>
       {open ? (
-        <div className="fixed inset-0 z-[60] lg:hidden" role="dialog" aria-modal="true" aria-label="Filters">
-          <button type="button" className="absolute inset-0 bg-ink/40" aria-label="Close filters" onClick={() => setOpen(false)} />
-          <div className="absolute inset-x-0 bottom-0 max-h-[85dvh] overflow-y-auto rounded-t-2xl bg-surface px-4 pb-6">
-            <div className="sticky top-0 flex items-center justify-between border-b border-line bg-surface py-3">
+        <OverlayPortal>
+        <div ref={dialogRef} tabIndex={-1} className="fixed inset-0 z-[60] outline-none lg:hidden" role="dialog" aria-modal="true" aria-label="Filters">
+          <button type="button" tabIndex={-1} aria-hidden="true" className="absolute inset-0 h-full w-full cursor-default bg-ink/45" onClick={() => setOpen(false)} />
+          <div className="absolute inset-x-0 bottom-0 max-h-[85dvh] overflow-y-auto overscroll-contain rounded-t-2xl bg-surface px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-line bg-surface py-3">
               <p className="font-bold">Filters</p>
               <button
+                ref={closeButtonRef}
                 type="button"
                 onClick={() => setOpen(false)}
                 className="inline-flex h-10 w-10 items-center justify-center rounded-lg hover:bg-paper"
@@ -318,6 +319,7 @@ export function MobileFilterButton({ options, hideBrand, basePath }: { options: 
             </button>
           </div>
         </div>
+        </OverlayPortal>
       ) : null}
     </>
   );

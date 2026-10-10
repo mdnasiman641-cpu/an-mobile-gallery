@@ -226,7 +226,7 @@ export default async function ProductPage({ params }: Props) {
       </div>
 
       {/* in-page navigation */}
-      <nav aria-label="Product sections" className="no-scrollbar sticky top-[121px] z-20 mt-10 flex gap-1 overflow-x-auto border-b border-line bg-paper/95 backdrop-blur md:top-[65px] lg:top-[79px]">
+      <nav aria-label="Product sections" className="no-scrollbar mt-10 flex gap-1 overflow-x-auto border-b border-line">
         {[
           specGroups.length ? ["specifications", "Specifications"] : null,
           product.description || product.features.length ? ["description", "Description"] : null,

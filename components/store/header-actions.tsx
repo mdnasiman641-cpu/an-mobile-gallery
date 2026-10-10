@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { ChevronRight, GitCompareArrows, Menu, ShoppingBag, User, X } from "lucide-react";
 import { useStore } from "@/components/providers";
+import { OverlayPortal, useModalOverlay } from "@/components/ui/overlay";
 import { cn } from "@/lib/utils";
 
 export function CartLink({ className }: { className?: string }) {
@@ -76,21 +78,21 @@ export function MobileMenu({
   phone: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  // close when any link inside the menu is followed
+  const close = useCallback(() => setOpen(false), []);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  useModalOverlay(open, close, dialogRef, { initialFocus: closeButtonRef });
+
+  // close when any link inside the menu is followed (and on any route change, e.g. Back)
   const closeOnLink = (e: React.MouseEvent<HTMLElement>) => {
     if ((e.target as HTMLElement).closest("a")) setOpen(false);
   };
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [open]);
+  const pathname = usePathname();
+  const [shownFor, setShownFor] = useState(pathname);
+  if (shownFor !== pathname) {
+    setShownFor(pathname);
+    if (open) setOpen(false);
+  }
 
   const link = "flex items-center justify-between rounded-lg px-3 py-2.5 text-[15px] font-medium text-ink hover:bg-paper";
 
@@ -108,20 +110,31 @@ export function MobileMenu({
       </button>
 
       {open ? (
-        <div className="fixed inset-0 z-[60] lg:hidden" role="dialog" aria-modal="true" aria-label="Menu" id="mobile-menu">
-          <button
-            type="button"
-            className="absolute inset-0 bg-ink/40"
-            aria-label="Close menu"
-            onClick={() => setOpen(false)}
-          />
-          <nav onClick={closeOnLink} className="absolute inset-y-0 left-0 flex w-[86%] max-w-sm flex-col overflow-y-auto bg-surface shadow-xl">
-            <div className="flex items-center justify-between border-b border-line px-4 py-3">
-              <span className="font-extrabold tracking-tight text-ink">{storeName}</span>
+        <OverlayPortal>
+        {/* rendered in <body>: covers the whole screen above the header (z-40) and category bar */}
+        <div
+          ref={dialogRef}
+          tabIndex={-1}
+          className="fixed inset-0 z-[60] outline-none lg:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Menu"
+          id="mobile-menu"
+        >
+          {/* backdrop: tap to close (the visible close button is the accessible one) */}
+          <button type="button" tabIndex={-1} aria-hidden="true" className="absolute inset-0 h-full w-full cursor-default bg-ink/45" onClick={() => setOpen(false)} />
+          <nav
+            onClick={closeOnLink}
+            aria-label="Main menu"
+            className="absolute inset-y-0 left-0 flex w-[86%] max-w-sm flex-col overflow-y-auto overscroll-contain bg-surface pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pt-[env(safe-area-inset-top)] shadow-xl"
+          >
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-line bg-surface px-4 py-3">
+              <span className="min-w-0 truncate font-extrabold tracking-tight text-ink">{storeName}</span>
               <button
+                ref={closeButtonRef}
                 type="button"
                 onClick={() => setOpen(false)}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-lg hover:bg-paper"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg hover:bg-paper"
                 aria-label="Close menu"
               >
                 <X className="h-5 w-5" />
@@ -183,6 +196,7 @@ export function MobileMenu({
             ) : null}
           </nav>
         </div>
+        </OverlayPortal>
       ) : null}
     </>
   );
