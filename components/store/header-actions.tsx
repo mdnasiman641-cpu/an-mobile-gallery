@@ -126,10 +126,10 @@ export function MobileMenu({
           <nav
             onClick={closeOnLink}
             aria-label="Main menu"
-            className="absolute inset-y-0 left-0 flex w-[86%] max-w-sm flex-col overflow-y-auto overscroll-contain bg-surface pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pt-[env(safe-area-inset-top)] shadow-xl"
+            className="@container absolute inset-y-0 left-0 flex w-1/2 min-w-40 max-w-sm flex-col overflow-y-auto overflow-x-hidden overscroll-contain bg-surface [overflow-wrap:anywhere] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pt-[env(safe-area-inset-top)] shadow-xl"
           >
             <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-line bg-surface px-4 py-3">
-              <span className="min-w-0 truncate font-extrabold tracking-tight text-ink">{storeName}</span>
+              <span className="min-w-0 font-extrabold leading-tight tracking-tight text-ink">{storeName}</span>
               <button
                 ref={closeButtonRef}
                 type="button"
@@ -178,7 +178,7 @@ export function MobileMenu({
 
             <div className="border-t border-line px-2 py-3">
               <p className="px-3 pb-1 text-sm font-semibold text-ink-mute">Brands</p>
-              <div className="grid grid-cols-2">
+              <div className="grid grid-cols-1 @[15rem]:grid-cols-2">
                 {brands.map((b) => (
                   <Link key={b.slug} href={`/brands/${b.slug}`} className={link}>
                     {b.name}
