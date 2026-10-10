@@ -230,11 +230,11 @@ export function ProductPurchase({ product, variants, whatsapp }: Props) {
       ) : null}
 
       <div className="grid grid-cols-2 gap-2">
-        <Button size="lg" variant="outline" disabled={soldOut || combinationMissing} onClick={() => add(false)}>
-          <ShoppingBag className="h-[18px] w-[18px]" aria-hidden />
+        <Button size="lg" variant="outline" className="px-3 sm:px-6" disabled={soldOut || combinationMissing} onClick={() => add(false)}>
+          <ShoppingBag className="hidden h-[18px] w-[18px] min-[370px]:block" aria-hidden />
           Add to cart
         </Button>
-        <Button size="lg" disabled={soldOut || combinationMissing} onClick={() => add(true)}>
+        <Button size="lg" className="px-3 sm:px-6" disabled={soldOut || combinationMissing} onClick={() => add(true)}>
           Buy now
         </Button>
       </div>

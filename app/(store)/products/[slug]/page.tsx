@@ -14,7 +14,7 @@ import { getSiteSettings } from "@/services/settings";
 import { ProductGallery } from "@/components/store/product-gallery";
 import { ProductPurchase } from "@/components/store/product-purchase";
 import { ProductGrid } from "@/components/store/product-card";
-import { PriceTag, RatingStars } from "@/components/store/product-bits";
+import { AvailabilityBadge, PriceTag, RatingStars } from "@/components/store/product-bits";
 import { ReviewForm } from "@/components/store/review-form";
 import { ViewTracker } from "@/components/store/view-tracker";
 import { WishlistButton } from "@/components/store/wishlist-button";
@@ -23,7 +23,7 @@ import { RichText } from "@/components/ui/rich-text";
 import { JsonLd } from "@/components/seo/json-ld";
 import { breadcrumbJsonLd, productJsonLd } from "@/lib/jsonld";
 import { absoluteUrl, buildMetadata, productSeoDescription, productSeoTitle } from "@/lib/seo";
-import { conditionLabel, formatDate, formatPrice } from "@/lib/utils";
+import { MEMORY_SPEC_NAME, conditionLabel, formatDate, formatPrice, withMemoryUnit } from "@/lib/utils";
 import type { ProductSpecification } from "@/types";
 import { withSiteDefaults } from "@/lib/page-metadata";
 
@@ -56,6 +56,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   });
   if (product.canonical_url) meta.alternates = { canonical: product.canonical_url };
   return withSiteDefaults(meta);
+}
+
+/** Older listings saved RAM "6" / Storage "128": show the unit. */
+function specValue(s: ProductSpecification): string {
+  return MEMORY_SPEC_NAME.test(s.name) ? withMemoryUnit(s.value) : s.value;
 }
 
 function groupSpecs(specs: ProductSpecification[]) {
@@ -98,7 +103,7 @@ export default async function ProductPage({ params }: Props) {
     <div className="container-page py-5 lg:py-8">
       <Breadcrumbs items={crumbs.map((c, i) => ({ name: c.name, href: i < crumbs.length - 1 ? c.path : undefined }))} />
 
-      <div className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-10">
+      <div className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-10">
         <ProductGallery images={images} productName={product.name} />
 
         <div className="min-w-0">
@@ -112,18 +117,18 @@ export default async function ProductPage({ params }: Props) {
             {product.is_new ? <Badge tone="signal">New arrival</Badge> : null}
             {product.is_best_seller ? <Badge tone="taka">Best seller</Badge> : null}
           </div>
-          <h1 className="mt-1.5 text-2xl font-bold leading-tight md:text-[2rem]">{product.name}</h1>
+          <h1 className="mt-1.5 text-2xl font-bold leading-tight [overflow-wrap:anywhere] md:text-[2rem]">{product.name}</h1>
           <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-soft">
             {product.model ? (
-              <div className="flex gap-1">
-                <dt>Model:</dt>
-                <dd className="font-medium text-ink">{product.model}</dd>
+              <div className="flex min-w-0 gap-1">
+                <dt className="shrink-0">Model:</dt>
+                <dd className="min-w-0 font-medium text-ink [overflow-wrap:anywhere]">{product.model}</dd>
               </div>
             ) : null}
             {product.sku ? (
-              <div className="flex gap-1">
-                <dt>SKU:</dt>
-                <dd className="font-medium text-ink">{product.sku}</dd>
+              <div className="flex min-w-0 gap-1">
+                <dt className="shrink-0">SKU:</dt>
+                <dd className="min-w-0 font-medium text-ink [overflow-wrap:anywhere]">{product.sku}</dd>
               </div>
             ) : null}
             <div className="flex gap-1">
@@ -137,10 +142,26 @@ export default async function ProductPage({ params }: Props) {
             </a>
           ) : null}
 
-          {product.short_description ? <p className="mt-3 text-ink-soft">{product.short_description}</p> : null}
+          {product.short_description ? <p className="mt-3 text-ink-soft [overflow-wrap:anywhere]">{product.short_description}</p> : null}
 
           <div className="mt-5 rounded-[var(--radius-card)] border border-line bg-surface p-4 sm:p-5">
-            <Suspense fallback={<PriceTag price={product.price} salePrice={product.sale_price} size="lg" />}>
+            {/* The purchase controls read ?variant= in the browser; until then show price, stock and the button area */}
+            <Suspense
+              fallback={
+                <div className="flex flex-col gap-5">
+                  <div>
+                    <PriceTag price={product.price} salePrice={product.sale_price} size="lg" />
+                    <div className="mt-2">
+                      <AvailabilityBadge stock={product.stock_quantity} threshold={product.low_stock_threshold} status={product.status} className="text-sm" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2" aria-hidden>
+                    <div className="skeleton h-12 rounded-[var(--radius-control)]" />
+                    <div className="skeleton h-12 rounded-[var(--radius-control)]" />
+                  </div>
+                </div>
+              }
+            >
               <ProductPurchase
                 product={{
                   id: product.id,
@@ -193,9 +214,9 @@ export default async function ProductPage({ params }: Props) {
               <p className="text-sm font-semibold">Key specs</p>
               <ul className="mt-2 grid grid-cols-2 gap-2">
                 {keySpecs.map((s) => (
-                  <li key={s.id} className="rounded-lg bg-surface px-3 py-2 ring-1 ring-line">
+                  <li key={s.id} className="min-w-0 rounded-lg bg-surface px-3 py-2 ring-1 ring-line [overflow-wrap:anywhere]">
                     <span className="block text-xs text-ink-mute">{s.name}</span>
-                    <span className="block text-sm font-medium text-ink">{s.value}</span>
+                    <span className="block text-sm font-medium text-ink">{specValue(s)}</span>
                   </li>
                 ))}
               </ul>
@@ -205,7 +226,7 @@ export default async function ProductPage({ params }: Props) {
       </div>
 
       {/* in-page navigation */}
-      <nav aria-label="Product sections" className="no-scrollbar sticky top-[116px] z-20 mt-10 flex gap-1 overflow-x-auto border-b border-line bg-paper/95 backdrop-blur md:top-[72px] lg:top-[152px]">
+      <nav aria-label="Product sections" className="no-scrollbar sticky top-[121px] z-20 mt-10 flex gap-1 overflow-x-auto border-b border-line bg-paper/95 backdrop-blur md:top-[65px] lg:top-[79px]">
         {[
           specGroups.length ? ["specifications", "Specifications"] : null,
           product.description || product.features.length ? ["description", "Description"] : null,
@@ -226,7 +247,7 @@ export default async function ProductPage({ params }: Props) {
               <h2 className="text-xl font-bold">Specifications</h2>
               <div className="mt-4 overflow-hidden rounded-[var(--radius-card)] border border-line bg-surface">
                 {specGroups.map(([group, specs]) => (
-                  <table key={group} className="w-full border-collapse text-sm">
+                  <table key={group} className="w-full border-collapse text-sm [overflow-wrap:anywhere]">
                     <caption className="bg-paper px-4 py-2 text-left text-sm font-semibold text-ink">{group}</caption>
                     <tbody>
                       {specs.map((s) => (
@@ -234,7 +255,7 @@ export default async function ProductPage({ params }: Props) {
                           <th scope="row" className="w-2/5 px-4 py-2.5 text-left align-top font-normal text-ink-soft sm:w-1/3">
                             {s.name}
                           </th>
-                          <td className="px-4 py-2.5 text-ink">{s.value}</td>
+                          <td className="px-4 py-2.5 text-ink">{specValue(s)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -250,7 +271,7 @@ export default async function ProductPage({ params }: Props) {
               {product.features.length ? (
                 <ul className="mt-4 grid gap-2 sm:grid-cols-2">
                   {product.features.map((f) => (
-                    <li key={f.id} className="flex items-start gap-2 text-sm">
+                    <li key={f.id} className="flex min-w-0 items-start gap-2 text-sm [overflow-wrap:anywhere]">
                       <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0 text-signal" aria-hidden />
                       {f.feature}
                     </li>
@@ -274,7 +295,7 @@ export default async function ProductPage({ params }: Props) {
                 </div>
                 <ul className="mt-5 space-y-4">
                   {reviews.map((r) => (
-                    <li key={r.id} className="rounded-[var(--radius-card)] border border-line bg-surface p-4">
+                    <li key={r.id} className="rounded-[var(--radius-card)] border border-line bg-surface p-4 [overflow-wrap:anywhere]">
                       <div className="flex flex-wrap items-center gap-2">
                         <RatingStars value={r.rating} />
                         {r.title ? <span className="font-semibold">{r.title}</span> : null}
@@ -298,7 +319,7 @@ export default async function ProductPage({ params }: Props) {
         </div>
 
         <aside className="hidden pt-8 lg:block" aria-label="Need help">
-          <div className="sticky top-52 rounded-[var(--radius-card)] border border-line bg-surface p-5">
+          <div className="sticky top-[140px] rounded-[var(--radius-card)] border border-line bg-surface p-5">
             <p className="font-semibold">Questions about this phone?</p>
             <p className="bn mt-1 text-sm text-ink-soft">ফোন সম্পর্কে জানতে কল করুন</p>
             {settings.phone ? (

@@ -2,7 +2,7 @@ import { forwardRef, type InputHTMLAttributes, type SelectHTMLAttributes, type T
 import { cn } from "@/lib/utils";
 
 const control =
-  "w-full rounded-[var(--radius-control)] border border-line-strong bg-surface px-3 text-[15px] text-ink placeholder:text-ink-mute focus:border-signal focus:outline-none focus:ring-2 focus:ring-signal/20 disabled:bg-paper disabled:text-ink-mute aria-[invalid=true]:border-deal";
+  "w-full rounded-[var(--radius-control)] border border-line-strong bg-surface px-3 text-base text-ink md:text-[15px] placeholder:text-ink-mute focus:border-signal focus:outline-none focus:ring-2 focus:ring-signal/20 disabled:bg-paper disabled:text-ink-mute aria-[invalid=true]:border-deal";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input(
   { className, ...props },

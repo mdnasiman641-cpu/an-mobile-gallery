@@ -128,7 +128,7 @@ export function SearchBox({
           aria-autocomplete="list"
           aria-activedescendant={active >= 0 ? `${listId}-opt-${active}` : undefined}
           className={cn(
-            "w-full rounded-[var(--radius-control)] border border-line-strong bg-surface pl-10 text-[15px] placeholder:text-ink-mute focus:border-signal focus:outline-none focus:ring-4 focus:ring-brand/20 [&::-webkit-search-cancel-button]:hidden",
+            "w-full rounded-[var(--radius-control)] border border-line-strong bg-surface pl-10 text-base placeholder:text-ink-mute md:text-[15px] focus:border-signal focus:outline-none focus:ring-4 focus:ring-brand/20 [&::-webkit-search-cancel-button]:hidden",
             large ? "h-12 bg-paper pr-28 focus:bg-surface" : "h-11 pr-20",
           )}
         />

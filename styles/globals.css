@@ -93,6 +93,8 @@
   .prose-store {
     line-height: 1.7;
     max-width: 75ch;
+    /* long links / model lists must wrap instead of widening the page */
+    overflow-wrap: anywhere;
   }
   .prose-store p {
     margin-block: 0.75em;

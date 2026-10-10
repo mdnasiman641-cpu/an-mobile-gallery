@@ -43,7 +43,7 @@ export function ProductGallery({ images, productName }: { images: GalleryImage[]
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex min-w-0 flex-col gap-3">
       <div className="relative aspect-square overflow-hidden rounded-[var(--radius-card)] border border-line bg-surface">
         <Image
           key={current.url}
@@ -57,9 +57,9 @@ export function ProductGallery({ images, productName }: { images: GalleryImage[]
         />
       </div>
       {images.length > 1 ? (
-        <ul className="no-scrollbar flex gap-2 overflow-x-auto" aria-label="Product images">
+        <ul className="no-scrollbar flex min-w-0 snap-x gap-2 overflow-x-auto overscroll-x-contain p-0.5" aria-label="Product images">
           {images.map((img, i) => (
-            <li key={img.url} className="shrink-0">
+            <li key={img.url} className="shrink-0 snap-start">
               <button
                 type="button"
                 onClick={() => {

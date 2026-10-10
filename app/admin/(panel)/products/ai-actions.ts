@@ -8,6 +8,7 @@ import { AiProviderError, explainFailures } from "@/lib/ai/errors";
 import { parseJsonObject } from "@/lib/ai/providers";
 import { ALL_UNAVAILABLE_MESSAGE } from "@/lib/ai/router";
 import { buildCompletionRequest, COMPLETION_SECTIONS, mergeSections, sanitizeCompletion, type CompletionRun } from "@/lib/ai/product-completion";
+import { conditionFromName, conditionLabel } from "@/lib/utils";
 import type { ActionResult } from "@/types";
 
 /**
@@ -41,6 +42,10 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
   const parsed = inputSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Please check the product name, RAM and storage." };
   const input = parsed.data;
+  const named = conditionFromName(input.name);
+  if (named && input.condition === "new") {
+    return { ok: false, message: `The name says ${conditionLabel[named]} but Condition is New. Fix the Condition first so the description isn't wrong.` };
+  }
   const sections = Array.from(new Set(input.sections));
   const supabase = await createClient();
 

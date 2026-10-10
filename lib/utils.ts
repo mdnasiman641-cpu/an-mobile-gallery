@@ -146,3 +146,26 @@ export function nowLabel(): string {
 export function currentYear(): number {
   return new Date().getFullYear();
 }
+
+/** Spec names whose values are memory sizes (RAM / storage). */
+export const MEMORY_SPEC_NAME = /^\s*(ram|storage|rom|internal storage)\s*$/i;
+
+/**
+ * "6" → "6GB", "8 gb" → "8GB", "1 tb" → "1TB". Other text is unchanged.
+ * A bare "1" stays as typed (it could mean 1TB), so nothing is guessed.
+ */
+export function withMemoryUnit(value: string): string {
+  const s = value.trim();
+  const m = /^(\d+(?:\.\d+)?)\s*(gb|tb|mb)?$/i.exec(s);
+  if (!m) return s;
+  if (m[2]) return `${m[1]}${m[2].toUpperCase()}`;
+  return Number(m[1]) >= 2 ? `${m[1]}GB` : s;
+}
+
+/** Condition stated in a product name ("Realme 9 Used", "iPhone 13 (Refurbished)"), or null. */
+export function conditionFromName(name: string): "used" | "refurbished" | null {
+  const s = name.toLowerCase();
+  if (/\b(refurbished|refurb|renewed)\b/.test(s)) return "refurbished";
+  if (/\b(used|pre-?owned|second[- ]?hand)\b|ব্যবহৃত|ইউজড/.test(s)) return "used";
+  return null;
+}

@@ -1,5 +1,6 @@
 import "server-only";
 import { getServiceClient } from "@/lib/supabase/admin";
+import { conditionFromName } from "@/lib/utils";
 
 /**
  * One-way stock import from the shop's stock system (Lovable) into
@@ -83,7 +84,8 @@ export function normalizeStockItem(raw: unknown, removed = false): StockItem | n
     sku: text(r.sku, 80),
     ram: normalizeMemory(r.ram),
     storage: normalizeMemory(r.storage ?? r.rom),
-    condition: normalizeCondition(r.condition),
+    // no condition sent: a name like "Realme 9 Used" still saves as used, not new
+    condition: normalizeCondition(r.condition) ?? conditionFromName(name),
     color: text(r.color, 60),
     category: text(r.category, 80),
     quantity: Number.isFinite(qty) ? Math.max(0, Math.min(100000, Math.trunc(qty))) : 0,

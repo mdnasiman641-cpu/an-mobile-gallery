@@ -39,7 +39,7 @@ import { ConfirmButton } from "@/components/admin/ui";
 import { uploadImage } from "@/lib/image-upload";
 import { productSeoDescription, productSeoTitle } from "@/lib/seo";
 import { slugify } from "@/lib/slug";
-import { cn, discountPercent, formatPrice, isSvg } from "@/lib/utils";
+import { cn, conditionFromName, conditionLabel, discountPercent, formatPrice, isSvg } from "@/lib/utils";
 import type { ProductFormValues, VariantRow } from "@/lib/product-form-values";
 import type { Brand, Category, ProductCondition, ProductStatus } from "@/types";
 
@@ -357,6 +357,12 @@ export function ProductForm({
       toast.error("Fill in the product name, selling price, RAM and storage first.");
       return;
     }
+    // AI writes the description from the Condition field: a "Used" name with Condition "New" would produce wrong text
+    const named = conditionFromName(cur.name);
+    if (named && cur.condition === "new") {
+      toast.error(`The name says ${conditionLabel[named]} but Condition is New. Fix the Condition first.`);
+      return;
+    }
     busyRef.current = true;
     setAiBusy(true);
     setAiError(null);
@@ -428,6 +434,7 @@ export function ProductForm({
   const completion = run?.completion ?? null;
   const unapplied = completion ? unappliedFields(content, completionToForm(completion)) : [];
   const brandName = brands.find((b) => b.id === v.brand_id)?.name ?? completion?.brand?.name ?? null;
+  const namedCondition = conditionFromName(v.name);
   const skuSuggestion = completion && !v.sku.trim() && v.name.trim() && ram && storage ? suggestSku(v.name, brandName, ram, storage) : null;
 
   const tabBtn = (t: Tab) =>
@@ -524,12 +531,21 @@ export function ProductForm({
           <Field label="Model" htmlFor="model" hint="Model name or manufacturer model number, e.g. Galaxy S25 Ultra / SM-S938B" aside={<AiTag origin={origin("model")} />}>
             <Input id="model" value={v.model} onChange={(e) => set("model", e.target.value)} />
           </Field>
-          <Field label="Condition" htmlFor="condition">
+          <Field
+            label="Condition"
+            htmlFor="condition"
+            error={namedCondition && v.condition === "new" ? `The name says ${conditionLabel[namedCondition]}, but Condition is New. Customers see “New”.` : undefined}
+          >
             <Select id="condition" value={v.condition} onChange={(e) => set("condition", e.target.value as ProductCondition)}>
               <option value="new">New</option>
               <option value="used">Used</option>
               <option value="refurbished">Refurbished</option>
             </Select>
+            {namedCondition && v.condition === "new" ? (
+              <button type="button" className="self-start text-sm font-semibold text-signal underline" onClick={() => set("condition", namedCondition)}>
+                Set Condition to {conditionLabel[namedCondition]}
+              </button>
+            ) : null}
           </Field>
           <Field label="SKU" htmlFor="sku" error={errors.sku} hint="Your internal code, unique per product">
             <Input id="sku" value={v.sku} onChange={(e) => set("sku", e.target.value)} />

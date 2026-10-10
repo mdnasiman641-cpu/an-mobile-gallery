@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MEMORY_SPEC_NAME, withMemoryUnit } from "@/lib/utils";
 
 // Shared input validation (server actions validate everything again here,
 // and the database enforces its own constraints on top).
@@ -59,8 +60,9 @@ export const variantSchema = z
   .object({
     id: z.string().uuid().optional().nullable(),
     sku: optionalText(80),
-    storage: optionalText(40),
-    ram: optionalText(40),
+    // "6" → "6GB" so cards, filters and specs show the same unit
+    storage: optionalText(40).transform((v) => (v ? withMemoryUnit(v) : v)),
+    ram: optionalText(40).transform((v) => (v ? withMemoryUnit(v) : v)),
     color: optionalText(60),
     color_hex: z
       .string()
@@ -84,11 +86,14 @@ export const variantSchema = z
     path: ["storage"],
   });
 
-export const specSchema = z.object({
-  group_name: z.string().trim().max(60).default("General").transform((v) => v || "General"),
-  name: z.string().trim().min(1, "Specification name is required").max(80),
-  value: z.string().trim().min(1, "Specification value is required").max(500),
-});
+export const specSchema = z
+  .object({
+    group_name: z.string().trim().max(60).default("General").transform((v) => v || "General"),
+    name: z.string().trim().min(1, "Specification name is required").max(80),
+    value: z.string().trim().min(1, "Specification value is required").max(500),
+  })
+  // RAM "6" / Storage "128" are saved as 6GB / 128GB
+  .transform((s) => (MEMORY_SPEC_NAME.test(s.name) ? { ...s, value: withMemoryUnit(s.value) } : s));
 
 export const featureSchema = z.string().trim().min(1).max(300);
 

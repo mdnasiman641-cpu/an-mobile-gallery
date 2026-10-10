@@ -1,14 +1,17 @@
 import Link from "next/link";
 import Image from "next/image";
 import type { ProductCard as ProductCardType } from "@/types";
-import { cn, conditionLabel, discountPercent, isSvg } from "@/lib/utils";
+import { cn, conditionLabel, discountPercent, isSvg, withMemoryUnit } from "@/lib/utils";
 import { AvailabilityBadge, PriceTag, RatingStars } from "@/components/store/product-bits";
 import { AddToCartButton } from "@/components/store/add-to-cart-button";
 import { WishlistButton } from "@/components/store/wishlist-button";
 
 export function ProductCard({ product, priority = false }: { product: ProductCardType; priority?: boolean }) {
   const off = discountPercent(product.price, product.sale_price);
-  const specLine = [product.ram_options[0] && `${product.ram_options.join("/")} RAM`, product.storage_options.join(" / ")]
+  const specLine = [
+    product.ram_options[0] && `${product.ram_options.map(withMemoryUnit).join("/")} RAM`,
+    product.storage_options.map(withMemoryUnit).join(" / "),
+  ]
     .filter(Boolean)
     .join(", ");
 

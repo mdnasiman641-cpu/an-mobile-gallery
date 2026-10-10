@@ -44,7 +44,7 @@ export function SortSelect({ showRelevance, basePath }: { showRelevance: boolean
         value={current}
         onChange={(e) => apply({ sort: e.target.value === "relevance" ? null : e.target.value })}
         className={cn(
-          "h-10 rounded-[var(--radius-control)] border border-line-strong bg-surface px-3 text-sm font-medium",
+          "h-10 rounded-[var(--radius-control)] border border-line-strong bg-surface px-3 text-base font-medium md:text-sm",
           pending && "opacity-60",
         )}
         aria-label="Sort products"
@@ -97,7 +97,7 @@ function PriceRange({
         value={min}
         onChange={(e) => setMin(e.target.value.replace(/\D/g, ""))}
         aria-label="Minimum price"
-        className="h-10 w-full min-w-0 rounded-[var(--radius-control)] border border-line-strong px-2.5 text-sm"
+        className="h-10 w-full min-w-0 rounded-[var(--radius-control)] border border-line-strong px-2.5 text-base md:text-sm"
       />
       <span className="text-ink-mute" aria-hidden>
         –
@@ -109,7 +109,7 @@ function PriceRange({
         value={max}
         onChange={(e) => setMax(e.target.value.replace(/\D/g, ""))}
         aria-label="Maximum price"
-        className="h-10 w-full min-w-0 rounded-[var(--radius-control)] border border-line-strong px-2.5 text-sm"
+        className="h-10 w-full min-w-0 rounded-[var(--radius-control)] border border-line-strong px-2.5 text-base md:text-sm"
       />
       <button type="submit" className="h-10 shrink-0 rounded-[var(--radius-control)] bg-ink px-3 text-sm font-semibold text-white">
         Go
