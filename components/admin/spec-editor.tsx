@@ -47,12 +47,15 @@ export function SpecEditor({
   originOf,
   statusOf,
   isProtected,
+  sourceOf,
 }: {
   specs: SpecRowValue[];
   onChange: (specs: SpecRowValue[]) => void;
   originOf: (row: SpecRowValue) => "ai" | "manual" | "empty";
   statusOf: (name: string) => Verification;
   isProtected: (name: string) => boolean;
+  /** The web source behind a verified AI value, when there is one. */
+  sourceOf?: (name: string) => { title: string | null; url: string } | null;
 }) {
   const [closed, setClosed] = useState<string[]>([]);
   const [addTo, setAddTo] = useState("");
@@ -92,6 +95,13 @@ export function SpecEditor({
     const next = [...specs];
     [next[i], next[j]] = [next[j], next[i]];
     onChange(next);
+  };
+  const addGroup = () => {
+    const name = window.prompt("Name of the new group (e.g. Audio)")?.trim();
+    if (!name) return;
+    const g = name.slice(0, 60);
+    onChange([...specs, { group_name: g, name: "", value: "" }]);
+    setClosed((c) => c.filter((x) => x !== g));
   };
   const renameGroup = (from: string) => {
     const name = window.prompt(`Rename the group “${from}” to:`, from)?.trim();
@@ -221,9 +231,16 @@ export function SpecEditor({
                           {locked ? (
                             <Badge>Set by you</Badge>
                           ) : origin === "ai" ? (
-                            <Badge tone={status === "VERIFIED" ? "signal" : "taka"}>AI · {status === "VERIFIED" ? "verified" : "likely, please check"}</Badge>
+                            <Badge tone={status === "VERIFIED" ? "signal" : status === "CONFLICT" ? "warn" : "taka"}>
+                              AI · {status === "VERIFIED" ? "verified" : status === "CONFLICT" ? "sources disagree, please check" : "likely, please check"}
+                            </Badge>
                           ) : origin === "manual" ? (
                             <Badge tone="ink">Manual</Badge>
+                          ) : null}
+                          {origin === "ai" && status === "VERIFIED" && sourceOf?.(r.name) ? (
+                            <a className="min-w-0 break-words text-ink-soft underline" href={sourceOf(r.name)?.url} target="_blank" rel="noopener noreferrer nofollow">
+                              Source: {sourceOf(r.name)?.title || sourceOf(r.name)?.url}
+                            </a>
                           ) : null}
                           {issue ? (
                             <span className="text-warn" role="status">
@@ -256,8 +273,12 @@ export function SpecEditor({
             ))}
           </select>
         </label>
+        <Button type="button" variant="ghost" onClick={addGroup}>
+          <Plus className="h-4 w-4" aria-hidden />
+          Add group
+        </Button>
       </div>
-      <p className="mt-2 text-xs text-ink-mute">Rows with an empty name or value are skipped when saving. “AI · likely” values are from the model&apos;s knowledge, not a source — check them.</p>
+      <p className="mt-2 text-xs text-ink-mute">Rows with an empty name or value are skipped when saving. “AI · verified” values were found in a web source; “AI · likely” values were not — check them.</p>
     </div>
   );
 }

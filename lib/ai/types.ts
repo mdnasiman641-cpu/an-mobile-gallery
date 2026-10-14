@@ -139,6 +139,12 @@ export interface AiSource {
 export interface AiResponse {
   text: string;
   sources: AiSource[];
+  /** Parts of `text` and the sources (indexes into `sources`) that support them — from the provider's grounding data. */
+  supports?: { text: string; sources: number[] }[];
+  /** Web searches the provider actually ran (Gemini grounding). */
+  queries?: string[];
+  /** Google's Search Suggestions HTML (must be shown with grounded results). */
+  searchEntryPoint?: string | null;
 }
 
 export type AiErrorCode =

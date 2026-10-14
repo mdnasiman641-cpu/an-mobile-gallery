@@ -21,6 +21,8 @@ export interface ReviewItem {
   label: string;
   value: string | null;
   status: Verification;
+  /** Values the sources disagree on (CONFLICT). */
+  alternatives?: string[];
 }
 
 export interface AiPanelProps {
@@ -39,7 +41,8 @@ export interface AiPanelProps {
   canManageAi: boolean;
   busy: boolean;
   disabled: boolean;
-  onComplete: (sections: CompletionSection[]) => void;
+  /** research: search the web again instead of reusing recent research. */
+  onComplete: (sections: CompletionSection[], research?: boolean) => void;
   run: CompletionRun | null;
   justCompleted: boolean;
   error: { message: string; details: string[]; draftSaved: boolean } | null;
@@ -75,7 +78,11 @@ const STATE_BADGE: Record<FieldState, { tone: "signal" | "warn" | "deal" | "neut
   skipped: { tone: "neutral", text: "Not requested" },
 };
 
-/** One generation action per section ("Research product" = identity + specifications from the web). */
+/**
+ * One generation action per section. "Research product" always runs a new web
+ * search; the others reuse research from the last 7 days for the same product.
+ * Basic info and specifications are always written from a web search first.
+ */
 const ACTIONS: { label: string; sections: CompletionSection[]; research?: boolean }[] = [
   { label: "Research product", sections: ["basic", "specs"], research: true },
   { label: "Generate specifications", sections: ["specs"] },
@@ -132,14 +139,18 @@ export function ProductAiPanel(p: AiPanelProps) {
           </Button>
         ) : null}
         <p className="text-xs text-ink-mute" aria-live="polite">
-          {p.busy ? "AI is researching and completing product information…" : ran && p.run ? `Last AI run ${relativeTime(p.run.createdAt)} · ${p.run.usedModel}` : null}
+          {p.busy
+            ? p.busySections.some((s) => s === "basic" || s === "specs")
+              ? "Searching the web for this exact model, then writing the listing… (this can take a minute)"
+              : "AI is writing…"
+            : ran && p.run ? `Last AI run ${relativeTime(p.run.createdAt)} · ${p.run.usedModel}` : null}
         </p>
       </div>
 
       <div className="mt-4 space-y-3 rounded-lg bg-paper p-3">
         <div className="flex flex-wrap gap-2" role="group" aria-label="Generate one part">
           {ACTIONS.map((a) => (
-            <Button key={a.label} type="button" size="sm" variant="outline" disabled={blocked} onClick={() => p.onComplete(a.sections)}>
+            <Button key={a.label} type="button" size="sm" variant="outline" disabled={blocked} onClick={() => p.onComplete(a.sections, a.research)}>
               {a.research ? <Search className="h-3.5 w-3.5" aria-hidden /> : <Sparkles className="h-3.5 w-3.5" aria-hidden />} {a.label}
             </Button>
           ))}
@@ -264,15 +275,23 @@ export function ProductAiPanel(p: AiPanelProps) {
                 <dd className="inline font-semibold">{p.run.chain.length > 1 ? p.run.chain.join(" → ") : `skipped ${p.run.skipped.length} unavailable model(s)`}</dd>
               </div>
             ) : null}
-            <div>
-              <dt className="inline text-ink-mute">Web research: </dt>
-              <dd className="inline">
-                {completion.researched
-                  ? `yes, ${completion.sources.length} source${completion.sources.length === 1 ? "" : "s"} (listed below)`
-                  : (p.run.researchNote ?? "not performed for this run — values are marked “likely”, not verified")}
-              </dd>
-            </div>
+            {p.run.research?.model ? (
+              <div>
+                <dt className="inline text-ink-mute">Web research by: </dt>
+                <dd className="inline font-semibold">{p.run.research.model}</dd>
+              </div>
+            ) : null}
           </dl>
+          <ResearchSummary run={p.run} researched={completion.researched} />
+          {completion.warnings?.length ? (
+            <ul className="space-y-1 rounded-lg border border-warn/40 bg-warn-tint p-3 text-sm" aria-label="Warnings">
+              {completion.warnings.map((w, i) => (
+                <li key={i} className="flex gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden /> <span>{w}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {fields.length ? (
             <div className="rounded-lg border border-line">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2">
@@ -310,7 +329,7 @@ export function ProductAiPanel(p: AiPanelProps) {
 
           {p.lastApply && (p.lastApply.applied.length || p.lastApply.kept.length) ? (
             <p className="text-sm text-ink-soft">
-              {p.lastApply.applied.length ? <>Filled: {p.lastApply.applied.join(", ")}. </> : null}
+              {p.lastApply.applied.length ? <>Updated: {p.lastApply.applied.join(", ")}. </> : null}
               {p.lastApply.kept.length ? <>Kept your edits: {p.lastApply.kept.join(", ")}.</> : null}
             </p>
           ) : null}
@@ -349,7 +368,7 @@ export function ProductAiPanel(p: AiPanelProps) {
           {p.review.length ? (
             <details className="rounded-lg border border-line p-3 text-sm" open={p.justCompleted}>
               <summary className="cursor-pointer font-semibold">
-                Needs verification ({p.review.filter((i) => i.value).length}){" "}
+                Needs checking ({p.review.filter((i) => i.value).length}){p.review.some((i) => i.status === "CONFLICT") ? ` · ${p.review.filter((i) => i.status === "CONFLICT").length} conflict(s)` : ""}{" "}
                 <span className="font-normal text-ink-mute">· not found ({p.review.filter((i) => !i.value).length}) — left empty in the form</span>
               </summary>
               <ul className="mt-2 divide-y divide-line">
@@ -357,9 +376,17 @@ export function ProductAiPanel(p: AiPanelProps) {
                   .filter((i) => i.value)
                   .map((item) => (
                     <li key={item.label} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
-                      <span>
+                      <span className="min-w-0 break-words">
                         <span className="font-medium">{item.label}</span>
-                        <span className="text-ink-soft">: {item.value}</span> <Badge tone="warn">Needs verification</Badge>
+                        <span className="text-ink-soft">: {item.value}</span>{" "}
+                        {item.status === "CONFLICT" ? (
+                          <>
+                            <Badge tone="deal">Conflict</Badge>
+                            {item.alternatives?.length ? <span className="block text-xs text-ink-soft">Sources say: {item.alternatives.join(" vs ")}</span> : null}
+                          </>
+                        ) : (
+                          <Badge tone="warn">Needs verification</Badge>
+                        )}
                       </span>
                       <Button type="button" size="sm" variant="ghost" onClick={() => p.onUseValue(item)}>
                         I checked it — use
@@ -395,20 +422,7 @@ export function ProductAiPanel(p: AiPanelProps) {
             </details>
           ) : null}
 
-          {completion.sources.length ? (
-            <details className="text-xs text-ink-soft">
-              <summary className="cursor-pointer">Sources ({completion.sources.length})</summary>
-              <ul className="mt-1 list-disc pl-5">
-                {completion.sources.map((s) => (
-                  <li key={s.url}>
-                    <a className="underline" href={s.url} target="_blank" rel="noopener noreferrer nofollow">
-                      {s.title || s.url}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          ) : null}
+          <VerifiedSpecs run={p.run} />
 
           <div className="flex flex-wrap gap-2 border-t border-line pt-3">
             <span className="self-center text-xs font-semibold text-ink-mute">Clear AI text:</span>
@@ -428,4 +442,76 @@ export function ProductAiPanel(p: AiPanelProps) {
 export function AiTag({ origin }: { origin: "ai" | "manual" | "empty" }) {
   if (origin === "ai") return <Badge tone="signal">AI</Badge>;
   return null;
+}
+
+/** What the web research did: status, searches run, numbered sources, Google Search Suggestions. */
+function ResearchSummary({ run, researched }: { run: CompletionRun; researched: boolean }) {
+  const r = run.research ?? null;
+  if (!researched || !r || r.status !== "ok") {
+    return (
+      <p className="flex gap-2 rounded-lg border border-warn/40 bg-warn-tint p-3 text-sm" role="note">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden />
+        <span>
+          <span className="font-semibold">Draft from the AI model&rsquo;s own knowledge — not web-verified. </span>
+          {r?.message ?? run.researchNote ?? "No web search was done for this run."} Check every value before saving.
+        </span>
+      </p>
+    );
+  }
+  return (
+    <details className="rounded-lg border border-line p-3 text-sm">
+      <summary className="cursor-pointer">
+        <span className="font-semibold">Web research: </span>
+        {r.sources.length} source{r.sources.length === 1 ? "" : "s"}
+        {r.queries.length ? `, ${r.queries.length} search${r.queries.length === 1 ? "" : "es"}` : ""} · {relativeTime(r.at)}
+      </summary>
+      {r.queries.length ? (
+        <p className="mt-2 text-xs text-ink-soft">
+          <span className="font-semibold">Searched for:</span> {r.queries.map((q) => `“${q}”`).join(", ")}
+        </p>
+      ) : null}
+      <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-xs">
+        {r.sources.map((s) => (
+          <li key={s.n} className="break-words">
+            <a className="underline" href={s.url} target="_blank" rel="noopener noreferrer nofollow">
+              {s.title || s.url}
+            </a>
+          </li>
+        ))}
+      </ol>
+      {r.searchEntryPoint ? (
+        // Google asks for its Search Suggestions to be shown with grounded results; isolated in a sandbox
+        <iframe title="Google Search Suggestions" className="mt-2 h-16 w-full rounded border-0" sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={r.searchEntryPoint} />
+      ) : null}
+    </details>
+  );
+}
+
+/** Specifications found in a web source, with the source and the supporting text. */
+function VerifiedSpecs({ run }: { run: CompletionRun }) {
+  const verified = run.completion.specs.filter((s) => s.status === "VERIFIED" && s.value && s.sources?.length);
+  if (!verified.length) return null;
+  return (
+    <details className="rounded-lg border border-line p-3 text-sm">
+      <summary className="cursor-pointer font-semibold">Verified from sources ({verified.length})</summary>
+      <ul className="mt-2 divide-y divide-line">
+        {verified.map((s) => (
+          <li key={s.label} className="py-1.5">
+            <span className="font-medium">{s.label}</span>: {s.value} <Badge tone="signal">Verified</Badge>
+            <span className="block break-words text-xs text-ink-soft">
+              {s.sources?.map((src, i) => (
+                <span key={src.n}>
+                  {i ? ", " : ""}
+                  <a className="underline" href={src.url} target="_blank" rel="noopener noreferrer nofollow">
+                    [{src.n}] {src.title || src.url}
+                  </a>
+                </span>
+              ))}
+              {s.evidence ? <> — &ldquo;{s.evidence}&rdquo;</> : null}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
 }

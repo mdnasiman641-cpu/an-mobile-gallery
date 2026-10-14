@@ -1,5 +1,6 @@
 import { stripPriceAndRatingSentences, VERIFICATION, type Verification } from "@/lib/ai/product-content";
 import { normalizeAnswer, PHONE_SPECS } from "@/lib/ai/spec-catalog";
+import { findEvidence, researchForPrompt, type ProductResearch, type ResearchSource } from "@/lib/ai/research";
 import { slugify } from "@/lib/slug";
 import type { AiRequest, AiSource } from "@/lib/ai/types";
 
@@ -55,6 +56,12 @@ export interface CompletionSpec extends Guess {
   key: string;
   group: string;
   label: string;
+  /** Research sources that support the value (VERIFIED only). */
+  sources?: ResearchSource[];
+  /** Supporting text from the research (VERIFIED only). */
+  evidence?: string | null;
+  /** Values the sources disagree on (CONFLICT). */
+  alternatives?: string[];
 }
 
 export interface CompletionInput {
@@ -69,6 +76,10 @@ export interface CompletionInput {
   brandOptions: string[];
   categoryOptions: string[];
   sections: CompletionSection[];
+  /** Live web research for this product (step 1), or null when none is available. */
+  research?: ProductResearch | null;
+  /** Specifications already in the form (context for description / SEO / FAQ). */
+  knownSpecs?: { name: string; value: string }[];
 }
 
 export interface ProductCompletion {
@@ -86,8 +97,12 @@ export interface ProductCompletion {
   seo: { title: string | null; description: string | null; keywords: string[]; slug: string | null };
   faq: { q: string; a: string }[];
   sources: AiSource[];
-  /** True when the model searched the web during this run. */
+  /** True when a real web search returned sources for this run. */
   researched: boolean;
+  /** What the listing step identified (brand / exact model / variant / device type). */
+  identity?: { brand: string | null; model: string | null; variant: string | null; deviceType: string | null; exactMatch: boolean | null; note: string | null } | null;
+  /** Things the admin must look at (model not confirmed, RAM/storage not an official variant, …). */
+  warnings?: string[];
 }
 
 /** One Complete with AI run, as returned to the form and cached on the product. */
@@ -105,6 +120,8 @@ export interface CompletionRun {
   check?: CompletionCheck;
   /** Why no web research happened, when it didn't. */
   researchNote?: string | null;
+  /** The research step (sources, searches run, notes), reused for later parts of the same product. */
+  research?: ProductResearch | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,55 +130,68 @@ export interface CompletionRun {
 
 const SYSTEM = `You complete product listings for AN MOBILE GALLERY, a mobile phone shop in Bangladesh.
 Rules you must follow:
-- Identify the EXACT device first: brand, official model name and the variant given by the shop (RAM / storage). Do not mix it up with similar models (Pro / Plus / Ultra / Lite, 4G vs 5G, a different year) or regional versions.
-- When you can search the web: prefer the manufacturer's official product or specification page, then official support pages, then reliable specification databases. Use a source only if it is about this exact model and variant, and put its URL in "source". Never invent or guess a URL.
-- "VERIFIED": confirmed by a source you cite in "source". "LIKELY": widely documented for this exact model, no source at hand. "NEEDS_VERIFICATION": your best guess, put it in "value". "UNKNOWN": you don't know — leave "value" empty.
-- Fill every specification you know for this exact model. Leave a field empty only when you don't know it or it doesn't apply (e.g. no telephoto camera). For NFC, wireless charging, memory card and water resistance write "No" when the phone doesn't have it.
-- RAM and storage are given by the shop and are final. Do not change or question them.
-- Condition is given by the shop. Write the text for that condition (a used phone is not "brand new").
-- Never mention, estimate or invent prices, discounts, EMI, offers, costs, stock, delivery, return policy, ratings, stars, reviews, testimonials or customer names.
-- Model numbers, MPN, barcodes (GTIN/EAN/UPC) and warranty: only when VERIFIED with a source URL. Otherwise leave them empty.
-- Every text (descriptions, highlights, SEO, FAQ) must be about this exact model and variant, based on the specifications. Name the model in the short description, description, SEO title and SEO description. No keyword stuffing.
-- FAQ answers may only use facts you are confident about. Do not write FAQs about price, EMI, warranty, stock or delivery.
-- Write plain, clear English for Bangladeshi shoppers in your own words. Do not copy text from websites. No hype, no emojis.
+- Identify the EXACT device from the product name: brand, official model name, variant (RAM / storage) and device type. Words like used, pre-owned, pre own, official, intact, box are shop notes, not part of the model. Do not mix it up with similar models (Pro / Plus / Ultra / Lite / Prime, 4G vs 5G, another year) or regional versions.
+- When research notes from a web search are given, take specification values ONLY from them and give the numbers of the sources that support each value in "sources". Statuses: "VERIFIED" = stated in the notes with a source number; "CONFLICT" = sources disagree (put the values in "alternatives"); "NOT_FOUND" = not in the notes (leave "value" empty).
+- Without research notes nothing is verified: use "LIKELY" only for values you are certain belong to this exact model, otherwise "NOT_FOUND" with an empty value.
+- Never invent values, URLs, sources or quotes. Do not write "No", "Not supported" or "N/A" unless a source says so; leave features that don't apply out.
+- RAM and storage are given by the shop and are final. Never change them; if the sources show they are not an official variant, say so in "ram_storage_check".
+- Original manufacturer specifications only. For a used phone never describe its condition, battery health, repairs or included accessories; do not list box contents.
+- Never mention, estimate or invent prices, discounts, EMI, offers, costs, stock, delivery, warranty or return terms, ratings, stars, reviews, testimonials or customer names.
+- Model numbers, barcodes (GTIN/EAN/UPC) and warranty: only when VERIFIED.
+- Descriptions, highlights, SEO and FAQ: about this exact model and variant, based on the specifications (no feature that isn't in them, nothing that contradicts them). Name the model. Concrete facts instead of generic claims like "premium performance". Suitable for the given condition (a used phone is not "brand new"). No keyword stuffing, no hype, no emojis. Plain English for Bangladeshi shoppers, in your own words.
+- FAQ: product-specific questions answered with facts only; nothing about price, EMI, warranty, stock, delivery, returns or payment.
 - Reply with ONE JSON object only, no markdown, no text before or after it.`;
 
-const g = `{"value": "", "status": "VERIFIED|LIKELY|UNKNOWN|NEEDS_VERIFICATION", "source": "url or null"}`;
+const g = `{"value": "", "status": "VERIFIED|LIKELY|NOT_FOUND|CONFLICT", "sources": [1], "alternatives": []}`;
 const SPEC_GUIDE = PHONE_SPECS.map((s) => `- ${s.key}: ${s.label} (${s.group}) — ${s.hint}`).join("\n");
 const SCHEMA = `{
+  "identity": {"brand": "", "model": "exact official model name", "variant": "e.g. 4GB/64GB", "device_type": "Smartphone|Feature phone|Tablet", "exact_match": true, "note": "how the model was identified, or why it could not be confirmed"},
+  "ram_storage_check": {"status": "matches|conflict|unknown", "official_variants": "", "note": ""},
   "brand": "one of brand_options if it matches, otherwise the real brand name, or null",
   "category": "one of category_options, or null",
   "model": ${g},
   "model_number": ${g},
   "barcode": ${g},
   "warranty": ${g},
-  "specs": {"<spec key from the list below>": ${g}, "...": "one entry per spec key"},
-  "other_specs": [{"name": "another useful specification", "group": "Display|Performance|Camera|Battery|Connectivity|Physical|Features", "value": "", "status": "...", "source": null}],
+  "specs": {"<spec key from the list below>": ${g}, "...": "one entry per spec key that applies"},
+  "other_specs": [{"name": "another documented specification", "group": "General|Connectivity|Display|Performance|Memory|Camera|Battery|Physical|Security & sensors|Multimedia|Other features", "value": "", "status": "...", "sources": [], "alternatives": []}],
   "short_description": "one or two sentences, 120-300 characters, names the model",
-  "description": "3-5 short paragraphs, then '## Main features' with '- ' bullet lines, then '## Why buy it' with '- ' bullet lines",
-  "highlights": ["4 to 6 short key highlights"],
-  "seo": {"title": "max 60 characters, brand + model + variant", "description": "120-155 characters", "keywords": ["5 to 12 relevant search keywords"]},
-  "faq": [{"q": "", "a": ""}]
+  "description": "3-5 short paragraphs based on the specifications, then '## Main features' with '- ' bullet lines, then '## Why buy it' with '- ' bullet lines",
+  "highlights": ["4 to 6 short key highlights taken from the specifications"],
+  "seo": {"title": "max 60 characters, brand + model + variant", "description": "120-155 characters about this exact product", "keywords": ["5 to 12 relevant search keywords"]},
+  "faq": [{"q": "", "a": ""}],
+  "warnings": ["anything the shop must check"]
 }`;
 
 const SECTION_NOTES: Record<CompletionSection, string> = {
-  basic: "brand, category, model, model_number, barcode, warranty",
-  specs: "specs and other_specs",
+  basic: "identity, brand, category, model, model_number, barcode, warranty",
+  specs: "identity, ram_storage_check, specs and other_specs",
   description: "short_description, description, highlights",
   seo: "seo",
   faq: "faq (4-6 useful questions a buyer would ask about this exact phone)",
 };
 
 const nullableString = { type: ["string", "null"] };
+const STATUS_ENUM = ["VERIFIED", "LIKELY", "NOT_FOUND", "CONFLICT"];
 const guessSchema = {
   type: "object",
-  properties: { value: nullableString, status: { type: "string", enum: [...VERIFICATION] }, source: nullableString },
-  required: ["value", "status", "source"],
+  properties: {
+    value: nullableString,
+    status: { type: "string", enum: STATUS_ENUM },
+    sources: { type: "array", items: { type: "integer" } },
+    alternatives: { type: "array", items: { type: "string" } },
+  },
+  required: ["value", "status"],
 };
 /** The answer shape as JSON Schema (used where the provider supports schema-constrained output). */
 export const COMPLETION_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
+    identity: {
+      type: "object",
+      properties: { brand: nullableString, model: nullableString, variant: nullableString, device_type: nullableString, exact_match: { type: ["boolean", "null"] }, note: nullableString },
+    },
+    ram_storage_check: { type: "object", properties: { status: { type: "string", enum: ["matches", "conflict", "unknown"] }, official_variants: nullableString, note: nullableString } },
     brand: nullableString,
     category: nullableString,
     model: guessSchema,
@@ -171,15 +201,16 @@ export const COMPLETION_JSON_SCHEMA: Record<string, unknown> = {
     specs: { type: "object", properties: Object.fromEntries(PHONE_SPECS.map((s) => [s.key, guessSchema])) },
     other_specs: {
       type: "array",
-      items: { type: "object", properties: { name: { type: "string" }, group: { type: "string" }, value: nullableString, status: { type: "string" }, source: nullableString }, required: ["name", "value", "status"] },
+      items: { type: "object", properties: { name: { type: "string" }, group: { type: "string" }, ...guessSchema.properties }, required: ["name", "value", "status"] },
     },
     short_description: nullableString,
     description: nullableString,
     highlights: { type: "array", items: { type: "string" } },
     seo: { type: "object", properties: { title: nullableString, description: nullableString, keywords: { type: "array", items: { type: "string" } } } },
     faq: { type: "array", items: { type: "object", properties: { q: { type: "string" }, a: { type: "string" } }, required: ["q", "a"] } },
+    warnings: { type: "array", items: { type: "string" } },
   },
-  required: ["brand", "category", "model", "specs", "short_description", "description", "highlights", "seo", "faq"],
+  required: ["identity", "brand", "category", "model", "specs", "short_description", "description", "highlights", "seo", "faq"],
 };
 
 export function buildCompletionRequest(input: CompletionInput): AiRequest {
@@ -194,16 +225,23 @@ export function buildCompletionRequest(input: CompletionInput): AiRequest {
     model_entered: input.model,
     brand_options: input.brandOptions.slice(0, 80),
     category_options: input.categoryOptions.slice(0, 80),
+    ...(input.knownSpecs?.length ? { specifications_in_the_form: input.knownSpecs.slice(0, 80) } : {}),
   };
   const focus = all ? "Fill in every field." : `Only these parts are needed: ${input.sections.map((s) => SECTION_NOTES[s]).join("; ")}. Leave other fields empty.`;
+  const r = input.research;
+  const research =
+    r && r.status === "ok"
+      ? `\n\n${researchForPrompt(r)}`
+      : "\n\nNo web research is available for this run: nothing can be VERIFIED. Use only what you are certain of for this exact model (status LIKELY); everything else NOT_FOUND with an empty value.";
   return {
     task: "product_content",
     system: SYSTEM,
-    prompt: `Research this phone and complete its listing. ${focus}\n\nShop data (JSON):\n${JSON.stringify(facts, null, 1)}\n\nReturn JSON in exactly this shape:\n${SCHEMA}\n\nSpecification keys:\n${SPEC_GUIDE}`,
+    prompt: `Complete this phone's listing. ${focus}\n\nShop data (JSON):\n${JSON.stringify(facts, null, 1)}${research}\n\nReturn JSON in exactly this shape:\n${SCHEMA}\n\nSpecification keys:\n${SPEC_GUIDE}`,
     json: true,
     jsonSchema: { name: "product_listing", schema: COMPLETION_JSON_SCHEMA },
-    research: true,
-    // a full listing is a long answer (and may include a web search)
+    // the web search already happened in the research step; this step writes JSON from it
+    research: false,
+    // a full listing is a long answer
     minTimeoutMs: 90_000,
   };
 }
@@ -235,26 +273,41 @@ const NOT_A_VALUE = /^(n\/?a|unknown|not available|needs verification|none|null|
 
 function status(v: unknown): Verification {
   const s = String(v ?? "").toUpperCase().replace(/[\s-]+/g, "_");
-  return (VERIFICATION as readonly string[]).includes(s) ? (s as Verification) : "UNKNOWN";
+  if (s === "NOT_FOUND") return "UNKNOWN";
+  return (VERIFICATION as readonly string[]).includes(s) && s !== "USER_PROVIDED" ? (s as Verification) : "UNKNOWN";
 }
 
-const isUrl = (s: string | null): s is string => Boolean(s && /^https?:\/\/[^\s]+$/i.test(s));
+type Checked = Guess & { sources?: ResearchSource[]; evidence?: string | null; alternatives?: string[] };
 
 /**
- * One guessed value. Without web research in this run nothing can be
- * VERIFIED (it is capped at LIKELY), whatever the model claims.
+ * One value from the listing step, with an honest status:
+ *  - VERIFIED only when the value is found in a part of the research that a
+ *    real search result supports (the model's own claim and any URL it writes
+ *    are ignored);
+ *  - CONFLICT when the model reports that sources disagree (never applied to the form);
+ *  - otherwise LIKELY (filled, not verified) or not found.
  */
-function guess(raw: unknown, researched: boolean, max = 200): Guess {
-  const o = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : { value: raw, status: raw ? "LIKELY" : "UNKNOWN" }) as { value?: unknown; status?: unknown; source?: unknown; source_url?: unknown };
+function guess(raw: unknown, research: ProductResearch | null, label: string, max = 200): Checked {
+  const o = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : { value: raw, status: raw ? "LIKELY" : "UNKNOWN" }) as {
+    value?: unknown;
+    status?: unknown;
+    sources?: unknown;
+    source?: unknown;
+    alternatives?: unknown;
+  };
   let value = str(Array.isArray(o.value) ? o.value.filter((x) => typeof x === "string").join(", ") : o.value, max);
-  let st = status(o.status);
-  const source = str(o.source ?? o.source_url, 500);
-  if (!value || NOT_A_VALUE.test(value) || MONEY_OR_REVIEWS.test(value)) {
-    value = null;
-    if (st === "VERIFIED" || st === "LIKELY") st = "UNKNOWN";
+  const st = status(o.status);
+  if (value && (NOT_A_VALUE.test(value) || MONEY_OR_REVIEWS.test(value))) value = null;
+  const alternatives = strList(o.alternatives, 5, 120).filter((a) => !MONEY_OR_REVIEWS.test(a));
+  if (st === "CONFLICT" && (value || alternatives.length)) {
+    return { value, status: "CONFLICT", source: null, alternatives: Array.from(new Set([...(value ? [value] : []), ...alternatives])) };
   }
-  if (st === "VERIFIED" && !(researched && isUrl(source))) st = "LIKELY";
-  return { value, status: value ? st : st === "NEEDS_VERIFICATION" ? "NEEDS_VERIFICATION" : "UNKNOWN", source: isUrl(source) ? source : null };
+  if (!value) return { value: null, status: st === "NEEDS_VERIFICATION" ? "NEEDS_VERIFICATION" : "UNKNOWN", source: null };
+  const citedRaw = Array.isArray(o.sources) ? o.sources : typeof o.source === "number" ? [o.source] : [];
+  const cited = citedRaw.map((x) => Number(x)).filter((x) => Number.isInteger(x) && x > 0);
+  const ev = research?.status === "ok" ? findEvidence(label, value, cited, research) : null;
+  if (ev) return { value, status: "VERIFIED", source: ev.sources[0].url, sources: ev.sources, evidence: ev.text };
+  return { value, status: st === "NEEDS_VERIFICATION" ? "NEEDS_VERIFICATION" : "LIKELY", source: null };
 }
 
 /** GTIN-8/12/13/14 check digit. */
@@ -290,7 +343,9 @@ export function sanitizeCompletion(
   taxonomy: { brands: { id: string; name: string }[]; categories: { id: string; name: string }[] },
 ): ProductCompletion {
   const raw = normalizeAnswer(answer);
-  const researched = sources.length > 0;
+  const research = input.research ?? null;
+  const researched = research?.status === "ok";
+  void sources; // sources come from the research step, not from the listing answer
   const want = new Set(input.sections);
 
   const brandName = str(raw.brand, 80);
@@ -306,7 +361,9 @@ export function sanitizeCompletion(
   })() : null;
 
   const specsRaw = (raw.specs && typeof raw.specs === "object" ? raw.specs : {}) as Record<string, unknown>;
-  const specs: CompletionSpec[] = COMPLETION_SPECS.map((f) => ({ key: f.key, group: f.group, label: f.label, ...guess(specsRaw[f.key], researched) }));
+  // box contents describe a new phone; for a used unit the seller states what is included
+  const specList = COMPLETION_SPECS.filter((f) => input.condition === "new" || f.key !== "package_contents");
+  const specs: CompletionSpec[] = specList.map((f) => ({ key: f.key, group: f.group, label: f.label, ...guess(specsRaw[f.key], research, f.label) }));
   if (Array.isArray(raw.other_specs)) {
     const taken = new Set(COMPLETION_SPECS.map((s) => s.label.toLowerCase()));
     for (const o of raw.other_specs.slice(0, 16)) {
@@ -314,13 +371,13 @@ export function sanitizeCompletion(
       if (!name || taken.has(name.toLowerCase()) || isProtectedSpec(name) || MONEY_OR_REVIEWS.test(name)) continue;
       taken.add(name.toLowerCase());
       const group = str((o as { group?: unknown } | null)?.group, 40);
-      specs.push({ key: `other:${name.toLowerCase()}`, group: group && !MONEY_OR_REVIEWS.test(group) ? group : "Other", label: name, ...guess(o, researched) });
+      specs.push({ key: `other:${name.toLowerCase()}`, group: group && !MONEY_OR_REVIEWS.test(group) ? group : "Other", label: name, ...guess(o, research, name) });
       if (specs.length >= COMPLETION_SPECS.length + 12) break;
     }
   }
 
-  const identifier = (v: unknown, extra: (value: string) => boolean = () => true): Guess | null => {
-    const gss = guess(v, researched, 80);
+  const identifier = (v: unknown, label: string, extra: (value: string) => boolean = () => true): Guess | null => {
+    const gss = guess(v, research, label, 80);
     if (!gss.value) return gss.status === "NEEDS_VERIFICATION" ? gss : null;
     // Identifiers are only kept when verified from a source during this run.
     if (gss.status !== "VERIFIED" || !extra(gss.value)) return { value: gss.value, status: "NEEDS_VERIFICATION", source: gss.source };
@@ -343,14 +400,35 @@ export function sanitizeCompletion(
   const description = stripPriceAndRatingSentences(str(raw.description, 6000));
   const shortDescription = stripPriceAndRatingSentences(str(raw.short_description, 500));
 
+  // Identity and checks the shop must see (never applied automatically)
+  const idRaw = (raw.identity && typeof raw.identity === "object" ? raw.identity : null) as Record<string, unknown> | null;
+  const identity = idRaw
+    ? {
+        brand: str(idRaw.brand, 80),
+        model: str(idRaw.model, 120),
+        variant: str(idRaw.variant, 60),
+        deviceType: str(idRaw.device_type ?? idRaw.deviceType, 40),
+        exactMatch: typeof idRaw.exact_match === "boolean" ? idRaw.exact_match : typeof idRaw.exactMatch === "boolean" ? idRaw.exactMatch : null,
+        note: str(idRaw.note, 300),
+      }
+    : null;
+  const warnings: string[] = [];
+  if (identity?.exactMatch === false) warnings.push(`The exact model could not be confirmed${identity.note ? `: ${identity.note}` : "."} Check the brand, model and specifications before saving.`);
+  const rs = (raw.ram_storage_check && typeof raw.ram_storage_check === "object" ? raw.ram_storage_check : null) as Record<string, unknown> | null;
+  if (rs && String(rs.status).toLowerCase() === "conflict") {
+    const official = str(rs.official_variants, 120);
+    warnings.push(`${input.ram} RAM / ${input.storage} storage is not listed as an official variant${official ? ` (official: ${official})` : ""}${str(rs.note, 200) ? ` — ${str(rs.note, 200)}` : ""}. Your RAM and storage were kept; please check them.`);
+  }
+  for (const w of strList(raw.warnings, 6, 300)) if (!MONEY_OR_REVIEWS.test(w) && !warnings.includes(w)) warnings.push(w);
+
   return {
     sections: input.sections,
     brand: want.has("basic") ? brand : null,
     category: want.has("basic") ? category : null,
-    model: want.has("basic") ? guess(raw.model, researched, 80) : null,
-    mpn: want.has("basic") ? identifier(raw.model_number) : null,
-    barcode: want.has("basic") ? identifier(raw.barcode, (v) => validGtin(v.replace(/[\s-]/g, ""))) : null,
-    warranty: want.has("basic") ? identifier(raw.warranty) : null,
+    model: want.has("basic") ? guess(raw.model ?? identity?.model, research, "model", 80) : null,
+    mpn: want.has("basic") ? identifier(raw.model_number, "model number") : null,
+    barcode: want.has("basic") ? identifier(raw.barcode, "barcode", (v) => validGtin(v.replace(/[\s-]/g, ""))) : null,
+    warranty: want.has("basic") ? identifier(raw.warranty, "warranty") : null,
     specs: want.has("specs") ? specs : [],
     shortDescription: want.has("description") ? shortDescription : null,
     description: want.has("description") ? description : null,
@@ -364,8 +442,10 @@ export function sanitizeCompletion(
         }
       : { title: null, description: null, keywords: [], slug: null },
     faq: want.has("faq") ? faq : [],
-    sources: sources.slice(0, 20),
+    sources: researched ? research!.sources.map((x) => ({ url: x.url, title: x.title })) : [],
     researched,
+    identity,
+    warnings,
   };
 }
 
@@ -388,6 +468,8 @@ export function mergeSections(prev: ProductCompletion, next: ProductCompletion):
     faq: has("faq") ? next.faq : prev.faq,
     sources: next.sources.length ? next.sources : prev.sources,
     researched: next.researched || prev.researched,
+    identity: has("basic") || has("specs") ? (next.identity ?? prev.identity) : prev.identity,
+    warnings: has("basic") || has("specs") ? (next.warnings ?? []) : (prev.warnings ?? []),
   };
 }
 
@@ -503,8 +585,10 @@ export function completionToForm(c: ProductCompletion): AiFormValues {
 }
 
 /** Values that need the admin's attention (unknown or unverified). */
-export function needsReview(c: ProductCompletion): { label: string; value: string | null; status: Verification }[] {
-  const list: { label: string; value: string | null; status: Verification }[] = [];
+export function needsReview(c: ProductCompletion): { label: string; value: string | null; status: Verification; alternatives?: string[] }[] {
+  const list: { label: string; value: string | null; status: Verification; alternatives?: string[] }[] = [];
+  // sources disagree: shown first, never applied automatically
+  for (const s of c.specs) if (s.status === "CONFLICT") list.push({ label: s.label, value: s.value ?? s.alternatives?.[0] ?? null, status: "CONFLICT", alternatives: s.alternatives });
   const add = (label: string, gss: Guess | null, need: "usable" | "verified") => {
     if (!gss) return;
     const ok = need === "verified" ? gss.status === "VERIFIED" : gss.status === "VERIFIED" || gss.status === "LIKELY";
@@ -516,7 +600,7 @@ export function needsReview(c: ProductCompletion): { label: string; value: strin
     add("Barcode (GTIN)", c.barcode, "verified");
     add("Warranty", c.warranty, "verified");
   }
-  for (const s of c.specs) if (!isProtectedSpec(s.label)) add(s.label, s, "usable");
+  for (const s of c.specs) if (!isProtectedSpec(s.label) && s.status !== "CONFLICT") add(s.label, s, "usable");
   return list;
 }
 
@@ -586,7 +670,8 @@ export function mergeIntoForm(current: FormContent, ai: AiFormValues, proposed: 
     if (f === "specs") {
       const rows = current.specs.map((r) => ({ ...r }));
       const aiSpecs = [...(ai.specs ?? [])];
-      let changed = false;
+      const added: string[] = [];
+      const updated: string[] = [];
       for (const p of value as SpecRow[]) {
         if (isProtectedSpec(p.name)) continue;
         const i = rows.findIndex((r) => specKey(r.name) === specKey(p.name));
@@ -598,22 +683,24 @@ export function mergeIntoForm(current: FormContent, ai: AiFormValues, proposed: 
             continue;
           } else {
             rows[i] = { group_name: rows[i].group_name || p.group_name, name: rows[i].name, value: p.value };
-            changed = true;
+            updated.push(rows[i].name);
           }
         } else {
           // insert after the last row of the same group, else at the end
           const lastOfGroup = rows.map((r) => r.group_name.toLowerCase()).lastIndexOf(p.group_name.toLowerCase());
           rows.splice(lastOfGroup >= 0 ? lastOfGroup + 1 : rows.length, 0, { ...p });
-          changed = true;
+          added.push(p.name);
         }
         const j = aiSpecs.findIndex((s) => specKey(s.name) === specKey(p.name));
         if (j >= 0) aiSpecs[j] = { ...p };
         else aiSpecs.push({ ...p });
       }
       nextAi.specs = aiSpecs;
-      if (changed) {
+      if (added.length || updated.length) {
         patch.specs = rows;
-        applied.push(FIELD_LABELS.specs);
+        // say exactly what changed (regenerating shows which values were updated)
+        const parts = [added.length ? `${added.length} added` : "", updated.length ? `changed: ${updated.join(", ")}` : ""].filter(Boolean);
+        applied.push(`${FIELD_LABELS.specs} (${parts.join("; ")})`);
       }
       continue;
     }
@@ -787,15 +874,23 @@ export function evaluateCompletion(c: ProductCompletion, facts: { name: string; 
         return c.brand?.id ? r("success") : c.brand ? r("partial", `“${c.brand.name}” isn't in your brand list`) : r("failed", "not identified");
       case "category":
         return c.category?.id ? r("success") : c.category ? r("partial", `suggested “${c.category.name}”, which isn't in your category list`) : r("failed", "no matching category");
-      case "model":
-        if (c.model?.value && (c.model.status === "VERIFIED" || c.model.status === "LIKELY")) return r("success");
-        return c.model?.value ? r("partial", "needs verification") : r("failed", "not identified");
+      case "model": {
+        if (!c.model?.value) return r("failed", "not identified");
+        if (c.identity?.exactMatch === false) return r("partial", "exact model not confirmed");
+        if (c.model.status === "VERIFIED") return r("success", "verified from sources");
+        if (c.model.status === "LIKELY") return r("partial", c.researched ? "not found in the sources" : "not web-verified");
+        return r("partial", "needs verification");
+      }
       case "specs": {
         const n = c.specs.filter((s) => s.value && (s.status === "VERIFIED" || s.status === "LIKELY") && !isProtectedSpec(s.label)).length;
-        if (n === 0) return r("failed", "no usable specifications");
+        const conflicts = c.specs.filter((s) => s.status === "CONFLICT").length;
+        if (n === 0) return r("failed", conflicts ? `no usable specifications; ${conflicts} conflicts to review` : "no usable specifications");
         const verified = c.specs.filter((s) => s.value && s.status === "VERIFIED").length;
-        const note = `${n} filled${verified ? `, ${verified} verified from sources` : ""}`;
-        return n >= SPECS_FOR_SUCCESS ? r("success", note) : r("partial", `${note} (expected at least ${SPECS_FOR_SUCCESS})`);
+        const extra = conflicts ? `; ${conflicts} conflict${conflicts === 1 ? "" : "s"} to review` : "";
+        // without a web search nothing is verified: filled, but not a success
+        if (!c.researched) return r("partial", `${n} filled from the model's knowledge — not web-verified${extra}`);
+        const note = `${verified} verified from sources, ${n - verified} not verified${extra}`;
+        return n >= SPECS_FOR_SUCCESS && verified >= Math.ceil(n / 2) && !conflicts ? r("success", note) : r("partial", n < SPECS_FOR_SUCCESS ? `${note} (expected at least ${SPECS_FOR_SUCCESS})` : note);
       }
       case "short_description":
         return textField(c.shortDescription, 40);
@@ -853,8 +948,10 @@ export function fillGaps(prev: ProductCompletion, next: ProductCompletion): Prod
       slug: prev.seo.slug ?? next.seo.slug,
     },
     faq: prev.faq.length >= 3 ? prev.faq : next.faq.length > prev.faq.length ? next.faq : prev.faq,
-    sources: [...prev.sources, ...next.sources.filter((x) => !urls.has(x.url))].slice(0, 20),
+    sources: [...prev.sources, ...next.sources.filter((x) => !urls.has(x.url))].slice(0, 30),
     researched: prev.researched || next.researched,
+    identity: prev.identity ?? next.identity,
+    warnings: Array.from(new Set([...(prev.warnings ?? []), ...(next.warnings ?? [])])),
   };
 }
 

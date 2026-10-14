@@ -339,7 +339,7 @@ export function ProductForm({
    * mode "fill": AI values replace earlier AI text in those parts (edits need confirmation).
    * mode "missing": only empty fields / missing spec rows are filled; nothing existing changes.
    */
-  async function completeWithAi(sections: CompletionSection[], mode: "fill" | "missing" = "fill") {
+  async function completeWithAi(sections: CompletionSection[], mode: "fill" | "missing" = "fill", forceResearch = false) {
     if (sections.length === 0) return;
     if (busyRef.current) return; // one request at a time
     const cur = vRef.current;
@@ -379,6 +379,12 @@ export function ProductForm({
         categoryId: cur.category_id || null,
         model: cur.model || null,
         sections,
+        // the specs already in the form give description / SEO / FAQ their facts
+        knownSpecs: cur.specs
+          .filter((r) => !isProtectedSpec(r.name) && r.name.trim() && r.value.trim())
+          .slice(0, 100)
+          .map((r) => ({ name: r.name.trim().slice(0, 80), value: r.value.trim().slice(0, 500) })),
+        forceResearch,
       });
       if (!res.ok || !res.data) {
         setAiError({ message: res.message ?? "All configured AI models are currently unavailable.", details: res.attempts ?? [], draftSaved: true });
@@ -386,7 +392,7 @@ export function ProductForm({
       }
       const data = res.data;
       const partial = sections.length < COMPLETION_SECTIONS.length;
-      setRun((prev) => (prev && partial ? { ...data, completion: mergeSections(prev.completion, data.completion) } : data));
+      setRun((prev) => (prev && partial ? { ...data, research: data.research ?? prev.research ?? null, completion: mergeSections(prev.completion, data.completion) } : data));
       setJustCompleted(true);
       const proposed = pickSections(completionToForm(data.completion), sections);
       if (mode === "missing") applyAi(onlyEmptyFields(formContent(vRef.current), proposed), false);
@@ -469,7 +475,7 @@ export function ProductForm({
         canManageAi={canManageAi}
         busy={aiBusy}
         disabled={saving || uploading > 0}
-        onComplete={(sections) => void completeWithAi(sections)}
+        onComplete={(sections, research) => void completeWithAi(sections, "fill", Boolean(research))}
         check={check}
         busySections={busySections}
         missing={missing}
@@ -813,6 +819,7 @@ export function ProductForm({
           originOf={(row) => specOrigin(row, ai)}
           statusOf={specStatus}
           isProtected={isProtectedSpec}
+          sourceOf={(name) => completion?.specs.find((x) => x.label.toLowerCase() === name.trim().toLowerCase())?.sources?.[0] ?? null}
         />
 
         <h3 className="mt-8 flex items-center gap-2 font-semibold">

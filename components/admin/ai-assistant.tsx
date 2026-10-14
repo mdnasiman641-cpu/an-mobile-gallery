@@ -45,7 +45,9 @@ const VERIFY_ICON: Record<Verification, { Icon: typeof CheckCircle2; cls: string
   VERIFIED: { Icon: CheckCircle2, cls: "text-signal", text: "verified" },
   LIKELY: { Icon: CheckCircle2, cls: "text-taka", text: "likely, not verified" },
   NEEDS_VERIFICATION: { Icon: AlertTriangle, cls: "text-warn", text: "needs verification" },
-  UNKNOWN: { Icon: CircleHelp, cls: "text-ink-mute", text: "unknown" },
+  UNKNOWN: { Icon: CircleHelp, cls: "text-ink-mute", text: "not found" },
+  CONFLICT: { Icon: AlertTriangle, cls: "text-deal", text: "sources disagree" },
+  USER_PROVIDED: { Icon: CheckCircle2, cls: "text-signal", text: "entered by you" },
 };
 
 export function AiAssistant(props: AssistantProps) {

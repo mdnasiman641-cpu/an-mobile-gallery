@@ -16,7 +16,8 @@ import { isMemorySizeName, normalizeAnswer, PHONE_SPECS, SPEC_GROUP_ORDER } from
  *    confirmed "Regenerate and replace my edits".
  */
 
-export const VERIFICATION = ["VERIFIED", "LIKELY", "UNKNOWN", "NEEDS_VERIFICATION"] as const;
+/** UNKNOWN is shown as "Not found". CONFLICT: sources disagree. USER_PROVIDED: typed or confirmed by the shop. */
+export const VERIFICATION = ["VERIFIED", "LIKELY", "UNKNOWN", "NEEDS_VERIFICATION", "CONFLICT", "USER_PROVIDED"] as const;
 export type Verification = (typeof VERIFICATION)[number];
 
 /** RAM and storage (from the stock system or the admin) plus the shared phone spec list. */

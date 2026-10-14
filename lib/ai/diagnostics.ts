@@ -95,7 +95,11 @@ export async function checkResearch(model: AiModelConfig, fetchImpl: FetchLike =
       { task: "test", system: "You are a connection test.", prompt: "Search the web and reply with the current year as a single number.", json: false, research: true },
       fetchImpl,
     );
-    return step("research", true, `Works${res.sources.length ? ` (${res.sources.length} source${res.sources.length === 1 ? "" : "s"})` : " (no sources returned)"}.`);
+    // An answer without sources means no web search happened: don't call that working.
+    if (!res.sources.length) {
+      return step("research", false, `The model answered, but no web search happened (no sources returned). Gemini models search with Google Search grounding; OpenAI models only search when they are "-search-preview" models.`);
+    }
+    return step("research", true, `Works: ${res.sources.length} source${res.sources.length === 1 ? "" : "s"}${res.queries?.length ? `, searched for “${res.queries.slice(0, 2).join("”, “")}”` : ""}.`);
   } catch (e) {
     return step("research", false, `${describeError(e, model.apiKey)} Untick "Research (web)" on this model if your plan doesn't include web search.`);
   }

@@ -31,36 +31,61 @@ export interface PhoneSpec {
  */
 export const PHONE_SPECS: PhoneSpec[] = [
   { key: "os", group: "General", label: "Operating system", hint: "OS and version at launch, e.g. Android 15, HyperOS 2", aliases: ["os", "operating system", "software", "platform os", "ui"], core: true },
-  { key: "release_date", group: "General", label: "Release date", hint: "month and year of release, only if known", aliases: ["release date", "launch date", "released", "announced", "launch", "release"], core: false },
+  { key: "release_date", group: "General", label: "Release date", hint: "market availability month and year, only if documented", aliases: ["release date", "launch date", "released", "launch", "release", "availability", "market availability", "status"], core: false },
+  { key: "device_type", group: "General", label: "Device type", hint: "e.g. Smartphone, Feature phone", aliases: ["device type", "type of device", "form factor"], core: false },
+  { key: "announced", group: "General", label: "Announced", hint: "announcement month and year", aliases: ["announced", "announcement", "announcement date"], core: false },
 
   { key: "display_type", group: "Display", label: "Display", hint: "panel type, e.g. 6.67-inch AMOLED or Dynamic AMOLED 2X", aliases: ["display", "display type", "screen type", "panel", "panel type", "screen technology"], core: true },
   { key: "display_size", group: "Display", label: "Size", hint: "diagonal in inches, e.g. 6.9 inches", aliases: ["size", "display size", "screen size", "screen", "diagonal"], core: false },
   { key: "resolution", group: "Display", label: "Resolution", hint: "pixels, e.g. 2400 x 1080 (FHD+)", aliases: ["resolution", "display resolution", "screen resolution"], core: false },
   { key: "refresh_rate", group: "Display", label: "Refresh rate", hint: "e.g. 120Hz", aliases: ["refresh rate", "refresh"], core: false },
   { key: "display_protection", group: "Display", label: "Screen protection", hint: "e.g. Corning Gorilla Glass 5", aliases: ["screen protection", "display protection", "protection", "glass", "cover glass"], core: false },
+  { key: "peak_brightness", group: "Display", label: "Peak brightness", hint: "e.g. 1800 nits, only if documented", aliases: ["peak brightness", "brightness", "max brightness"], core: false },
+  { key: "touchscreen", group: "Display", label: "Touchscreen", hint: "e.g. capacitive multitouch", aliases: ["touchscreen", "touch screen", "touch"], core: false },
+  { key: "screen_to_body", group: "Display", label: "Screen-to-body ratio", hint: "e.g. ~84%, only if documented", aliases: ["screen to body ratio", "screen-to-body", "screen body ratio", "display to body ratio"], core: false },
 
   { key: "chipset", group: "Performance", label: "Chipset", hint: "e.g. Snapdragon 8 Elite, Helio G99", aliases: ["chipset", "chip", "soc", "platform", "processor chipset", "system on chip"], core: false },
   { key: "processor", group: "Performance", label: "Processor", hint: "CPU cores and clock speeds", aliases: ["processor", "cpu", "cpu details", "cores"], core: false },
   { key: "gpu", group: "Performance", label: "GPU", hint: "graphics, e.g. Adreno 830", aliases: ["gpu", "graphics", "graphics processor"], core: false },
-  { key: "expandable_storage", group: "Memory", label: "Expandable storage", hint: "memory card support, e.g. microSD up to 1TB, or No", aliases: ["expandable storage", "memory card", "card slot", "microsd", "micro sd", "memory card slot", "external storage"], core: false },
+  { key: "os_updates", group: "Performance", label: "OS updates", hint: "promised upgrades, only if officially documented", aliases: ["os updates", "os upgrades", "software updates", "upgrades"], core: false },
+  { key: "ram_variants", group: "Memory", label: "RAM variants", hint: "official RAM options, e.g. 4GB, 6GB", aliases: ["ram variants", "ram options", "available ram"], core: false },
+  { key: "storage_variants", group: "Memory", label: "Storage variants", hint: "official storage options, e.g. 64GB, 128GB", aliases: ["storage variants", "storage options", "internal storage options", "rom variants"], core: false },
+  { key: "expandable_storage", group: "Memory", label: "Expandable storage", hint: "memory card slot and type, e.g. microSDXC (dedicated slot), up to 1TB", aliases: ["expandable storage", "memory card", "card slot", "microsd", "micro sd", "memory card slot", "external storage", "card type"], core: false },
+  { key: "virtual_ram", group: "Memory", label: "Virtual RAM", hint: "extended / virtual RAM (not physical RAM), only if documented", aliases: ["virtual ram", "extended ram", "ram expansion", "memory fusion", "dynamic ram"], core: false },
 
   { key: "rear_camera", group: "Camera", label: "Rear camera", hint: "rear setup summary, e.g. 50MP + 8MP + 2MP", aliases: ["rear camera", "rear cameras", "back camera", "main cameras", "camera", "cameras", "rear camera setup"], core: false },
   { key: "main_camera", group: "Camera", label: "Main camera", hint: "main sensor, e.g. 200MP, f/1.7, OIS", aliases: ["main camera", "primary camera", "wide camera", "main", "main sensor"], core: false },
   { key: "ultrawide_camera", group: "Camera", label: "Ultrawide camera", hint: "only if the phone has one", aliases: ["ultrawide camera", "ultra wide camera", "ultrawide", "ultra wide"], core: false },
   { key: "telephoto_camera", group: "Camera", label: "Telephoto camera", hint: "only if the phone has one, e.g. 50MP 5x periscope", aliases: ["telephoto camera", "telephoto", "zoom camera", "periscope", "periscope camera"], core: false },
+  { key: "macro_camera", group: "Camera", label: "Macro camera", hint: "only if the phone has one", aliases: ["macro camera", "macro"], core: false },
+  { key: "depth_camera", group: "Camera", label: "Depth camera", hint: "only if the phone has one", aliases: ["depth camera", "depth sensor", "depth", "bokeh camera"], core: false },
   { key: "front_camera", group: "Camera", label: "Front camera", hint: "selfie camera, e.g. 12MP", aliases: ["front camera", "selfie camera", "selfie", "front"], core: false },
   { key: "video_recording", group: "Camera", label: "Video recording", hint: "max video, e.g. 4K@60fps", aliases: ["video recording", "video", "rear video", "video resolution"], core: false },
+  { key: "front_video", group: "Camera", label: "Front video", hint: "selfie video, e.g. 1080p@30fps", aliases: ["front video", "selfie video"], core: false },
+  { key: "flash", group: "Camera", label: "Flash", hint: "e.g. LED flash", aliases: ["flash", "camera flash", "led flash"], core: false },
+  { key: "stabilization", group: "Camera", label: "Image stabilization", hint: "e.g. OIS, EIS — only if documented", aliases: ["image stabilization", "stabilization", "ois", "eis"], core: false },
+  { key: "camera_features", group: "Camera", label: "Camera features", hint: "documented features, e.g. HDR, panorama, night mode", aliases: ["camera features", "features camera"], core: false },
 
   { key: "battery", group: "Battery", label: "Battery", hint: "capacity, e.g. 5000 mAh", aliases: ["battery", "battery capacity", "capacity"], core: true },
+  { key: "battery_type", group: "Battery", label: "Battery type", hint: "e.g. Li-Po, non-removable", aliases: ["battery type"], core: false },
   { key: "charging", group: "Battery", label: "Charging", hint: "wired charging speed, e.g. 45W", aliases: ["charging", "charging speed", "fast charging", "wired charging"], core: false },
   { key: "wireless_charging", group: "Battery", label: "Wireless charging", hint: "e.g. 15W, or No", aliases: ["wireless charging", "wireless"], core: false },
+  { key: "reverse_charging", group: "Battery", label: "Reverse charging", hint: "only if documented", aliases: ["reverse charging", "reverse wired charging", "reverse wireless charging"], core: false },
 
-  { key: "network", group: "Connectivity", label: "Network", hint: "supported generations, e.g. 2G, 3G, 4G LTE, 5G", aliases: ["network", "network technology", "networks", "cellular", "mobile network", "2g 3g 4g 5g", "bands"], core: true },
+  { key: "network", group: "Connectivity", label: "Network", hint: "supported generations, e.g. 2G, 3G, 4G LTE, 5G", aliases: ["network", "network technology", "networks", "cellular", "mobile network", "2g 3g 4g 5g", "technology"], core: true },
+  { key: "bands_2g", group: "Connectivity", label: "2G bands", hint: "only if documented", aliases: ["2g bands", "2g", "gsm bands"], core: false },
+  { key: "bands_3g", group: "Connectivity", label: "3G bands", hint: "only if documented", aliases: ["3g bands", "3g", "wcdma bands", "hspa bands"], core: false },
+  { key: "bands_4g", group: "Connectivity", label: "4G bands", hint: "only if documented", aliases: ["4g bands", "4g", "lte bands", "lte"], core: false },
+  { key: "bands_5g", group: "Connectivity", label: "5G bands", hint: "only if documented", aliases: ["5g bands", "5g", "nr bands"], core: false },
   { key: "sim", group: "Connectivity", label: "SIM", hint: "e.g. Dual Nano-SIM, eSIM", aliases: ["sim", "sim configuration", "sim card", "dual sim", "sim slots"], core: false },
   { key: "wifi", group: "Connectivity", label: "Wi-Fi", hint: "e.g. Wi-Fi 6 (802.11ax)", aliases: ["wifi", "wi fi", "wlan", "wireless lan"], core: false },
   { key: "bluetooth", group: "Connectivity", label: "Bluetooth", hint: "version, e.g. 5.3", aliases: ["bluetooth", "bt"], core: false },
   { key: "nfc", group: "Connectivity", label: "NFC", hint: "Yes or No", aliases: ["nfc"], core: false },
   { key: "usb", group: "Connectivity", label: "USB", hint: "connector, e.g. USB Type-C 2.0", aliases: ["usb", "usb connector", "port", "charging port", "connector", "usb port"], core: false },
+  { key: "usb_otg", group: "Connectivity", label: "USB OTG", hint: "only if documented", aliases: ["usb otg", "otg", "usb on the go"], core: false },
+  { key: "infrared", group: "Connectivity", label: "Infrared", hint: "IR blaster, only if documented", aliases: ["infrared", "infrared port", "ir blaster", "ir"], core: false },
+  { key: "fm_radio", group: "Connectivity", label: "FM radio", hint: "only if documented", aliases: ["fm radio", "radio", "fm"], core: false },
+  { key: "headphone_jack", group: "Connectivity", label: "Headphone jack", hint: "3.5mm jack, only if documented", aliases: ["headphone jack", "3.5mm jack", "audio jack", "3 5mm jack", "headset jack"], core: false },
   { key: "gps", group: "Connectivity", label: "GPS", hint: "e.g. GPS, GLONASS, Galileo, BeiDou", aliases: ["gps", "navigation", "positioning", "location"], core: false },
 
   { key: "dimensions", group: "Physical", label: "Dimensions", hint: "e.g. 162.8 x 77.6 x 8.2 mm", aliases: ["dimensions", "body dimensions", "size and weight dimensions"], core: false },
@@ -69,13 +94,16 @@ export const PHONE_SPECS: PhoneSpec[] = [
   { key: "water_resistance", group: "Physical", label: "Water / dust resistance", hint: "IP rating, e.g. IP68, or None", aliases: ["water resistance", "water dust resistance", "ip rating", "ingress protection", "dust resistance", "water and dust resistance"], core: false },
   { key: "colors", group: "Physical", label: "Colours", hint: "official colour names", aliases: ["colours", "colors", "colour", "color", "colour options", "color options", "available colours", "available colors"], core: false },
 
-  { key: "fingerprint", group: "Features", label: "Fingerprint sensor", hint: "e.g. under-display (optical) or side-mounted", aliases: ["fingerprint", "fingerprint sensor", "fingerprint scanner"], core: false },
-  { key: "face_unlock", group: "Features", label: "Face unlock", hint: "e.g. Yes (2D)", aliases: ["face unlock", "face id", "face recognition"], core: false },
-  { key: "sensors", group: "Features", label: "Sensors", hint: "e.g. accelerometer, gyro, proximity, compass", aliases: ["sensors", "sensor"], core: false },
-  { key: "audio", group: "Features", label: "Audio", hint: "e.g. stereo speakers, no 3.5mm jack", aliases: ["audio", "speakers", "loudspeaker", "headphone jack", "3.5mm jack", "sound"], core: false },
+  { key: "fingerprint", group: "Security & sensors", label: "Fingerprint sensor", hint: "e.g. under-display (optical) or side-mounted", aliases: ["fingerprint", "fingerprint sensor", "fingerprint scanner"], core: false },
+  { key: "face_unlock", group: "Security & sensors", label: "Face unlock", hint: "e.g. Yes (2D)", aliases: ["face unlock", "face id", "face recognition"], core: false },
+  { key: "sensors", group: "Security & sensors", label: "Sensors", hint: "e.g. accelerometer, gyro, proximity, compass", aliases: ["sensors", "sensor"], core: false },
+  { key: "loudspeaker", group: "Multimedia", label: "Loudspeaker", hint: "e.g. single bottom speaker, stereo speakers", aliases: ["loudspeaker", "speakers", "speaker", "stereo speakers"], core: false },
+  { key: "audio", group: "Multimedia", label: "Audio", hint: "documented audio features or certifications, e.g. Dolby Atmos, Hi-Res", aliases: ["audio", "sound", "audio features"], core: false },
+  { key: "special_features", group: "Other features", label: "Special features", hint: "documented software or manufacturer features", aliases: ["special features", "other features", "features", "software features"], core: false },
+  { key: "package_contents", group: "In the box", label: "In the box", hint: "official box contents (new phones only)", aliases: ["in the box", "package contents", "box contents", "whats in the box", "what's in the box"], core: false },
 ];
 
-export const SPEC_GROUP_ORDER = ["General", "Display", "Performance", "Memory", "Camera", "Battery", "Connectivity", "Physical", "Features", "Other"];
+export const SPEC_GROUP_ORDER = ["General", "Connectivity", "Display", "Performance", "Memory", "Camera", "Battery", "Physical", "Security & sensors", "Multimedia", "Other features", "In the box", "Features", "Other"];
 
 const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
 

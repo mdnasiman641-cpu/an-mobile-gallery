@@ -76,20 +76,38 @@ async function callGemini(model: AiModelConfig, req: AiRequest, fetchImpl: Fetch
   };
   const data = (await postJson(`${base}/${geminiModelPath(name)}:generateContent`, { "x-goog-api-key": model.apiKey ?? "" }, body, model, fetchImpl, req.minTimeoutMs)) as {
     candidates?: {
-      content?: { parts?: { text?: string }[] };
+      content?: { parts?: { text?: string; thought?: boolean }[] };
       finishReason?: string;
-      groundingMetadata?: { groundingChunks?: { web?: { uri?: string; title?: string } }[] };
+      groundingMetadata?: {
+        groundingChunks?: { web?: { uri?: string; title?: string } }[];
+        groundingSupports?: { segment?: { text?: string }; groundingChunkIndices?: number[] }[];
+        webSearchQueries?: string[];
+        searchEntryPoint?: { renderedContent?: string };
+      };
     }[];
     promptFeedback?: { blockReason?: string };
   };
   const cand = data.candidates?.[0];
   if (data.promptFeedback?.blockReason) throw new AiProviderError("INVALID_RESPONSE", `Request blocked: ${data.promptFeedback.blockReason}`);
-  const text = (cand?.content?.parts ?? []).map((p) => p.text ?? "").join("").trim();
+  // "thought" parts are the model's reasoning, not the answer
+  const text = (cand?.content?.parts ?? []).filter((p) => !p.thought).map((p) => p.text ?? "").join("").trim();
   if (!text) throw new AiProviderError("INVALID_RESPONSE", `Empty response${cand?.finishReason ? ` (${cand.finishReason})` : ""}`);
-  const sources: AiSource[] = (cand?.groundingMetadata?.groundingChunks ?? [])
-    .map((c) => (c.web?.uri ? { url: c.web.uri, title: c.web.title ?? null } : null))
-    .filter((s): s is AiSource => s !== null);
-  return { text, sources };
+  if (cand?.finishReason === "MAX_TOKENS" && req.json) throw new AiProviderError("INVALID_RESPONSE", "The answer was cut off (output token limit reached)");
+  // Keep the chunk numbering so grounding supports still point at the right source.
+  const gm = cand?.groundingMetadata;
+  const chunks = (gm?.groundingChunks ?? []).map((c) => (c.web?.uri ? { url: c.web.uri, title: c.web.title ?? null } : null));
+  const index = new Map<number, number>();
+  const sources: AiSource[] = [];
+  chunks.forEach((c, i) => {
+    if (c) {
+      index.set(i, sources.length);
+      sources.push(c);
+    }
+  });
+  const supports = (gm?.groundingSupports ?? [])
+    .map((s) => ({ text: (s.segment?.text ?? "").trim(), sources: (s.groundingChunkIndices ?? []).map((i) => index.get(i)).filter((i): i is number => i !== undefined) }))
+    .filter((s) => s.text && s.sources.length);
+  return { text, sources, supports, queries: (gm?.webSearchQueries ?? []).filter(Boolean), searchEntryPoint: gm?.searchEntryPoint?.renderedContent ?? null };
 }
 
 async function callOpenAiStyle(model: AiModelConfig, req: AiRequest, fetchImpl: FetchLike): Promise<AiResponse> {
@@ -114,15 +132,31 @@ async function callOpenAiStyle(model: AiModelConfig, req: AiRequest, fetchImpl: 
       : {}),
   };
   const data = (await postJson(`${base}/chat/completions`, { authorization: `Bearer ${model.apiKey ?? ""}` }, body, model, fetchImpl, req.minTimeoutMs)) as {
-    choices?: { message?: { content?: string | null; annotations?: { type?: string; url_citation?: { url?: string; title?: string } }[] } }[];
+    choices?: {
+      finish_reason?: string;
+      message?: { content?: string | null; annotations?: { type?: string; url_citation?: { url?: string; title?: string; start_index?: number; end_index?: number } }[] };
+    }[];
   };
   const msg = data.choices?.[0]?.message;
-  const text = (msg?.content ?? "").trim();
+  const raw = msg?.content ?? "";
+  const text = raw.trim();
   if (!text) throw new AiProviderError("INVALID_RESPONSE", "Empty response");
-  const sources: AiSource[] = (msg?.annotations ?? [])
-    .map((a) => (a.url_citation?.url ? { url: a.url_citation.url, title: a.url_citation.title ?? null } : null))
-    .filter((s): s is AiSource => s !== null);
-  return { text, sources };
+  if (data.choices?.[0]?.finish_reason === "length" && req.json) throw new AiProviderError("INVALID_RESPONSE", "The answer was cut off (output token limit reached)");
+  // url_citation annotations (search models): the cited text span supports that URL
+  const sources: AiSource[] = [];
+  const supports: { text: string; sources: number[] }[] = [];
+  for (const a of msg?.annotations ?? []) {
+    const c = a.url_citation;
+    if (!c?.url) continue;
+    let i = sources.findIndex((s) => s.url === c.url);
+    if (i < 0) {
+      i = sources.length;
+      sources.push({ url: c.url, title: c.title ?? null });
+    }
+    const span = typeof c.start_index === "number" && typeof c.end_index === "number" ? raw.slice(c.start_index, c.end_index).trim() : "";
+    if (span) supports.push({ text: span, sources: [i] });
+  }
+  return { text, sources, supports };
 }
 
 /** One request to one model. Throws AiProviderError on any failure. */
