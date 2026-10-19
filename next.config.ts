@@ -52,9 +52,13 @@ const nextConfig: NextConfig = {
   },
   async rewrites() {
     return {
-      beforeFiles: LISTING_ROUTES.flatMap(([source, destination]) =>
-        LISTING_QUERY_KEYS.map((key) => ({ source, destination, has: [{ type: "query" as const, key }] })),
-      ),
+      beforeFiles: [
+        // favicon from Admin → Settings → Branding & Favicon (app/site-favicon/route.ts)
+        { source: "/favicon.ico", destination: "/site-favicon" },
+        ...LISTING_ROUTES.flatMap(([source, destination]) =>
+          LISTING_QUERY_KEYS.map((key) => ({ source, destination, has: [{ type: "query" as const, key }] })),
+        ),
+      ],
       afterFiles: [],
       fallback: [],
     };

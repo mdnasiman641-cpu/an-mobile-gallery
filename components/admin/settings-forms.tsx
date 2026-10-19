@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { saveSeoSettingsAction, saveSiteSettingsAction } from "@/app/admin/(panel)/content-actions";
+import { saveFaviconAction } from "@/app/admin/(panel)/settings/branding-actions";
+import { FaviconField, type FaviconState } from "@/components/admin/favicon-field";
 import { ImageField, toastResult } from "@/components/admin/ui";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/form";
@@ -26,9 +28,11 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-export function SiteSettingsForm({ initial }: { initial: SiteSettings }) {
+export function SiteSettingsForm({ initial, favicon: savedFavicon }: { initial: SiteSettings; favicon: FaviconState }) {
   const router = useRouter();
   const [f, setF] = useState(toStrings(initial));
+  const [favicon, setFavicon] = useState<FaviconState>(savedFavicon);
+  const [saved, setSaved] = useState<FaviconState>(savedFavicon);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pending, start] = useTransition();
   const bind = (k: keyof SiteSettings) => ({
@@ -40,6 +44,12 @@ export function SiteSettingsForm({ initial }: { initial: SiteSettings }) {
 
   function save() {
     start(async () => {
+      // the favicon first: if it fails, nothing else is half-saved and the old icon stays
+      if (favicon.id !== saved.id) {
+        const fav = await saveFaviconAction(favicon.id);
+        if (!toastResult(fav)) return;
+        setSaved(favicon);
+      }
       const res = await saveSiteSettingsAction(f);
       setErrors(res.fieldErrors ?? {});
       if (toastResult(res)) router.refresh();
@@ -48,6 +58,21 @@ export function SiteSettingsForm({ initial }: { initial: SiteSettings }) {
 
   return (
     <div className="grid gap-5 pb-20">
+      <Section title="Branding & Favicon" description="Logo in the header and footer; icon in browser tabs, Google search results and phone home screens.">
+        <div>
+          <ImageField
+            label="Website logo"
+            value={f.logo_url || null}
+            onChange={(url) => setF((p) => ({ ...p, logo_url: url ?? "" }))}
+            folder="site"
+            aspect="aspect-[4/1]"
+            maxEdge={640}
+            hint="Transparent PNG or WebP, about 320 × 80 px. Without a logo, the store name is shown."
+          />
+        </div>
+        <FaviconField value={favicon} saved={saved} storeName={f.store_name || "Your store"} onChange={setFavicon} />
+      </Section>
+
       <Section title="Store">
         <Field label="Store name" htmlFor="s-store_name" error={errors.store_name} required>
           <Input {...bind("store_name")} />
@@ -61,17 +86,6 @@ export function SiteSettingsForm({ initial }: { initial: SiteSettings }) {
         <Field label="Tagline in Bangla" htmlFor="s-tagline_bn">
           <Input {...bind("tagline_bn")} className="bn" />
         </Field>
-        <div className="md:col-span-2 md:max-w-sm">
-          <ImageField
-            label="Logo"
-            value={f.logo_url || null}
-            onChange={(url) => setF((p) => ({ ...p, logo_url: url ?? "" }))}
-            folder="site"
-            aspect="aspect-[4/1]"
-            maxEdge={640}
-            hint="Transparent PNG or WebP, about 320 × 80 px. Without a logo, the store name is shown."
-          />
-        </div>
       </Section>
 
       <Section title="Contact" description="Shown in the header, footer, contact page and structured data.">

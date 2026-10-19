@@ -3,7 +3,9 @@ import { Hind_Siliguri, Onest } from "next/font/google";
 import "@/styles/globals.css";
 import { AppToaster } from "@/components/providers";
 import { getSeoSettings, getSiteSettings } from "@/services/settings";
-import { getSiteUrl } from "@/lib/env";
+import { getSiteUrl, supabaseUrl } from "@/lib/env";
+import { faviconMetadata } from "@/lib/favicon";
+import { getFaviconId } from "@/lib/favicon-server";
 import { absoluteImageUrl } from "@/lib/seo";
 
 const onest = Onest({ subsets: ["latin"], variable: "--font-onest", display: "swap" });
@@ -15,7 +17,7 @@ const hind = Hind_Siliguri({
 });
 
 export async function generateMetadata(): Promise<Metadata> {
-  const [seo, site] = await Promise.all([getSeoSettings(), getSiteSettings()]);
+  const [seo, site, faviconId] = await Promise.all([getSeoSettings(), getSiteSettings(), getFaviconId()]);
   const storeName = site.store_name || seo.site_title;
   const verification = seo.google_site_verification || process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION || undefined;
   const ogImage = absoluteImageUrl(seo.default_og_image);
@@ -26,6 +28,8 @@ export async function generateMetadata(): Promise<Metadata> {
     description: seo.site_description,
     keywords: seo.default_keywords || undefined,
     applicationName: storeName,
+    // Admin → Settings → Branding & Favicon (built-in brand icon when none is uploaded)
+    icons: faviconMetadata(faviconId, supabaseUrl),
     openGraph: {
       siteName: storeName,
       type: "website",
