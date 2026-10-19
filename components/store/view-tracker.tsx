@@ -2,12 +2,28 @@
 
 import { useEffect } from "react";
 import { getBrowserClient } from "@/lib/supabase/browser";
+import { itemsEvent, productItem, track } from "@/lib/tracking/client";
 
 /**
  * Counts a product view at most once per browser session, after the page is
  * idle. Goes straight to Supabase (no server function involved).
+ * Also sends the view_item tracking event (every view; only with consent,
+ * decided inside the tracking module).
  */
-export function ViewTracker({ productId }: { productId: string }) {
+export function ViewTracker({
+  productId,
+  tracking,
+}: {
+  productId: string;
+  tracking?: { name: string; price: number; brand: string | null; category: string | null };
+}) {
+  const t = tracking ? JSON.stringify(tracking) : null;
+  useEffect(() => {
+    if (!t) return;
+    const p = JSON.parse(t) as { name: string; price: number; brand: string | null; category: string | null };
+    track(itemsEvent("view_item", [productItem({ productId, name: p.name, price: p.price, brand: p.brand, category: p.category })]));
+  }, [productId, t]);
+
   useEffect(() => {
     const key = `amg-viewed-${productId}`;
     try {

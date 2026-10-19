@@ -4,9 +4,11 @@ import { StoreFooter } from "@/components/store/footer";
 import { JsonLd } from "@/components/seo/json-ld";
 import { organizationJsonLd, websiteJsonLd } from "@/lib/jsonld";
 import { getSeoSettings, getSiteSettings } from "@/services/settings";
+import { getPublicTrackingConfig } from "@/lib/tracking/server/config";
+import { TrackingRoot } from "@/components/tracking/tracking-root";
 
 export default async function StoreLayout({ children }: { children: React.ReactNode }) {
-  const [settings, seo] = await Promise.all([getSiteSettings(), getSeoSettings()]);
+  const [settings, seo, tracking] = await Promise.all([getSiteSettings(), getSeoSettings(), getPublicTrackingConfig()]);
   return (
     <StoreProvider>
       <a
@@ -20,6 +22,7 @@ export default async function StoreLayout({ children }: { children: React.ReactN
         {children}
       </main>
       <StoreFooter />
+      <TrackingRoot config={tracking} />
       <JsonLd data={[organizationJsonLd(settings, seo), websiteJsonLd(settings.store_name)]} />
     </StoreProvider>
   );

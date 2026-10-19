@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { useStore } from "@/components/providers";
 import { cn, effectivePrice } from "@/lib/utils";
 import type { ProductStatus } from "@/types";
+import { itemsEvent, productItem, track } from "@/lib/tracking/client";
 
 interface Props {
   product: {
@@ -67,6 +68,7 @@ export function AddToCartButton({ product, className }: Props) {
       price: effectivePrice(product.price, product.sale_price),
       maxQuantity: Math.max(1, Math.min(product.stock_quantity, 10)),
     });
+    track(itemsEvent("add_to_cart", [productItem({ productId: product.id, name: product.name, price: effectivePrice(product.price, product.sale_price) })]));
     toast.success("Added to cart", {
       description: product.name,
       action: { label: "View cart", onClick: () => router.push("/cart") },

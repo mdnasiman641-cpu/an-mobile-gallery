@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 import { assertStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { invalidateStock } from "@/lib/cache";
+import { after } from "next/server";
+import { prepareRefund } from "@/lib/tracking/server/delivery";
 import type { ActionResult } from "@/types";
 
 const schema = z.object({
@@ -22,6 +24,8 @@ export async function updateOrderAction(input: unknown): Promise<ActionResult> {
   const d = parsed.data;
 
   const supabase = await createClient();
+  // for the GA4 refund (sent once per order, only when it becomes cancelled / refunded)
+  const { data: before } = await supabase.from("orders").select("order_number, status, payment_status").eq("id", d.id).maybeSingle();
   const { error } = await supabase.rpc("admin_update_order", {
     p_order_id: d.id,
     p_status: d.status,
@@ -34,6 +38,15 @@ export async function updateOrderAction(input: unknown): Promise<ActionResult> {
     // stock was returned: refresh those product pages
     const { data } = await supabase.from("order_items").select("product_slug").eq("order_id", d.id);
     invalidateStock(((data ?? []) as { product_slug: string | null }[]).map((r) => r.product_slug));
+  }
+  const prev = before as { order_number: string; status: string; payment_status: string } | null;
+  if (prev && ((d.status === "cancelled" && prev.status !== "cancelled") || (d.payment_status === "refunded" && prev.payment_status !== "refunded"))) {
+    try {
+      const deliver = await prepareRefund({ orderId: d.id, orderNumber: prev.order_number });
+      after(deliver);
+    } catch {
+      /* tracking never blocks an order update */
+    }
   }
   revalidatePath(`/admin/orders/${d.id}`);
   return { ok: true, message: d.status === "cancelled" ? "Order cancelled and stock returned" : "Order updated" };

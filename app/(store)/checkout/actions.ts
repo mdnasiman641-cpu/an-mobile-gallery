@@ -1,7 +1,10 @@
 "use server";
 
+import { after } from "next/server";
+import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { invalidateStock } from "@/lib/cache";
+import { preparePurchase, type BrowserPurchase } from "@/lib/tracking/server/delivery";
 import { checkoutSchema, firstFieldErrors } from "@/lib/validation";
 import type { ActionResult } from "@/types";
 
@@ -11,6 +14,27 @@ export interface OrderConfirmation {
   discount: number;
   delivery_charge: number;
   total: number;
+  /** Purchase event for the browser tags (same event_id as the server copy), or null. */
+  tracking?: BrowserPurchase | null;
+}
+
+/**
+ * Purchase tracking never affects the order: it runs after the order exists,
+ * catches its own errors, and server delivery happens after the response.
+ */
+async function purchaseTracking(r: { order_id?: string; order_number: string; total: number }, contact: { email?: string | null; phone: string }) {
+  if (!r.order_id) return null;
+  try {
+    const prepared = await preparePurchase({ orderId: r.order_id, orderNumber: r.order_number, total: Number(r.total), contact, headers: await headers() });
+    try {
+      after(prepared.deliver);
+    } catch {
+      void prepared.deliver();
+    }
+    return prepared.browser;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -56,7 +80,8 @@ export async function placeOrderAction(input: unknown): Promise<ActionResult<Ord
   // Stock changed: refresh just these product pages (and home).
   invalidateStock(d.items.map((i) => i.slug));
 
-  const r = data as OrderConfirmation;
+  const r = data as OrderConfirmation & { order_id?: string };
+  const tracking = await purchaseTracking(r, { email: d.email ?? null, phone: d.phone });
   return {
     ok: true,
     data: {
@@ -65,6 +90,7 @@ export async function placeOrderAction(input: unknown): Promise<ActionResult<Ord
       discount: Number(r.discount),
       delivery_charge: Number(r.delivery_charge),
       total: Number(r.total),
+      tracking,
     },
   };
 }

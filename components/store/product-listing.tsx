@@ -54,7 +54,7 @@ export async function ProductListing({
 
         {result.items.length ? (
           <>
-            <ProductGrid products={result.items} priorityCount={4} className="xl:grid-cols-4" />
+            <ProductGrid products={result.items} priorityCount={4} className="xl:grid-cols-4" listName={query.query ? "Search results" : `Listing ${pathname}`} />
             <Pagination
               page={result.page}
               totalPages={result.totalPages}

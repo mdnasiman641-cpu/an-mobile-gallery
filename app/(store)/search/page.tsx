@@ -5,6 +5,7 @@ import { Breadcrumbs } from "@/components/ui/misc";
 import { buildMetadata } from "@/lib/seo";
 import { parseListingParams, type RawSearchParams } from "@/lib/listing";
 import { withSiteDefaults } from "@/lib/page-metadata";
+import { TrackOnMount } from "@/components/tracking/track-events";
 
 type Props = { searchParams: Promise<RawSearchParams> };
 
@@ -30,6 +31,7 @@ export default async function SearchPage({ searchParams }: Props) {
     <div className="container-page py-5 lg:py-8">
       <Breadcrumbs items={[{ name: "Home", href: "/" }, { name: "Search" }]} />
       <h1 className="mt-3 text-2xl font-bold md:text-3xl">{q ? <>Results for “{q}”</> : "Search products"}</h1>
+      {q ? <TrackOnMount event={{ name: "search", search_term: q.slice(0, 100) }} /> : null}
       <div className="mt-4 max-w-2xl md:hidden">
         <SearchBox key={q} initialQuery={q} />
       </div>

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Minus, Plus, Trash2 } from "lucide-react";
@@ -7,9 +8,16 @@ import { useStore } from "@/components/providers";
 import { ButtonLink } from "@/components/ui/button";
 import { EmptyState, Skeleton } from "@/components/ui/misc";
 import { formatPrice, isSvg } from "@/lib/utils";
+import { cartTrackItem, itemsEvent, track } from "@/lib/tracking/client";
 
 export function CartView({ insideDhaka, freeThreshold }: { insideDhaka: number; freeThreshold: number }) {
   const { items, ready, subtotal, updateQuantity, removeItem } = useStore();
+  const viewed = useRef(false);
+  useEffect(() => {
+    if (!ready || viewed.current || items.length === 0) return;
+    viewed.current = true;
+    track(itemsEvent("view_cart", items.map((i) => cartTrackItem(i))));
+  }, [ready, items]);
 
   if (!ready) {
     return (
@@ -54,7 +62,10 @@ export function CartView({ insideDhaka, freeThreshold }: { insideDhaka: number; 
                   <button
                     type="button"
                     className="flex h-9 w-9 items-center justify-center disabled:opacity-40"
-                    onClick={() => updateQuantity(item.key, item.quantity - 1)}
+                    onClick={() => {
+                      track(itemsEvent("remove_from_cart", [cartTrackItem(item, 1)]));
+                      updateQuantity(item.key, item.quantity - 1);
+                    }}
                     disabled={item.quantity <= 1}
                     aria-label="Decrease quantity"
                   >
@@ -64,7 +75,10 @@ export function CartView({ insideDhaka, freeThreshold }: { insideDhaka: number; 
                   <button
                     type="button"
                     className="flex h-9 w-9 items-center justify-center disabled:opacity-40"
-                    onClick={() => updateQuantity(item.key, item.quantity + 1)}
+                    onClick={() => {
+                      track(itemsEvent("add_to_cart", [cartTrackItem(item, 1)]));
+                      updateQuantity(item.key, item.quantity + 1);
+                    }}
                     disabled={item.quantity >= Math.min(item.maxQuantity, 10)}
                     aria-label="Increase quantity"
                   >
@@ -73,7 +87,10 @@ export function CartView({ insideDhaka, freeThreshold }: { insideDhaka: number; 
                 </div>
                 <button
                   type="button"
-                  onClick={() => removeItem(item.key)}
+                  onClick={() => {
+                    track(itemsEvent("remove_from_cart", [cartTrackItem(item)]));
+                    removeItem(item.key);
+                  }}
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2 text-sm text-ink-soft hover:bg-deal-tint hover:text-deal"
                 >
                   <Trash2 className="h-4 w-4" aria-hidden />

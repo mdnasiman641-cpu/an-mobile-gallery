@@ -10,6 +10,7 @@ import { VARIANT_IMAGE_EVENT } from "@/components/store/product-gallery";
 import { Button } from "@/components/ui/button";
 import { cn, effectivePrice, variantLabel, whatsappLink, formatPrice } from "@/lib/utils";
 import type { ProductStatus, ProductVariant } from "@/types";
+import { itemsEvent, productItem, track } from "@/lib/tracking/client";
 
 interface Props {
   product: {
@@ -22,6 +23,9 @@ interface Props {
     low_stock_threshold: number;
     status: ProductStatus;
     image: string | null;
+    /** For tracking events (optional). */
+    brand?: string | null;
+    category?: string | null;
   };
   variants: ProductVariant[];
   whatsapp: string | null;
@@ -119,6 +123,20 @@ export function ProductPurchase({ product, variants, whatsapp }: Props) {
         maxQuantity: maxQty,
       },
       quantity,
+    );
+    track(
+      itemsEvent("add_to_cart", [
+        productItem({
+          productId: product.id,
+          variantId: selected?.id ?? null,
+          name: product.name,
+          variant: selected ? variantLabel(selected) : null,
+          price: effectivePrice(price, salePrice),
+          quantity,
+          brand: product.brand,
+          category: product.category,
+        }),
+      ]),
     );
     if (goToCheckout) {
       router.push("/checkout");
@@ -247,7 +265,10 @@ export function ProductPurchase({ product, variants, whatsapp }: Props) {
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          onClick={() => toggleCompare({ id: product.id, slug: product.slug, name: product.name, image: product.image })}
+          onClick={() => {
+            if (!inCompare) track({ name: "add_to_compare", items: [productItem({ productId: product.id, name: product.name, price: effectivePrice(price, salePrice), brand: product.brand })] });
+            toggleCompare({ id: product.id, slug: product.slug, name: product.name, image: product.image });
+          }}
           aria-pressed={inCompare}
           className="inline-flex h-10 items-center gap-2 rounded-[var(--radius-control)] px-3 text-sm font-semibold text-ink-soft hover:bg-ink/5 hover:text-ink"
         >

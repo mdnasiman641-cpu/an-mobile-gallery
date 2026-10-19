@@ -3,6 +3,7 @@ import { Clock, Facebook, Instagram, Mail, MapPin, MessageCircle, Phone, Youtube
 import { buildCategoryTree, getCategories } from "@/services/catalog";
 import { getSiteSettings } from "@/services/settings";
 import { Logo } from "@/components/store/header";
+import { CookieSettingsItem } from "@/components/tracking/tracking-root";
 import { STORE_AREA, STORE_SERVICES } from "@/lib/storefront";
 import { currentYear, whatsappLink } from "@/lib/utils";
 
@@ -99,6 +100,7 @@ export async function StoreFooter() {
                 Privacy policy
               </Link>
             </li>
+            <CookieSettingsItem className={linkCls} />
             <li>
               <Link href="/track" className={linkCls}>
                 Track your order

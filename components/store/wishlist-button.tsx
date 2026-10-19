@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Heart } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { productItem, track } from "@/lib/tracking/client";
 
 /**
  * Saves to the customer's wishlist. Checks the session only when tapped; the
@@ -44,6 +45,8 @@ export function WishlistButton({
       return;
     }
     setSaved(true);
+    // newly saved only (an item already in the wishlist is not a new add); price isn't known here, so none is sent
+    if (!error) track({ name: "add_to_wishlist", items: [productItem({ productId, name: productName ?? productSlug })] });
     toast.success("Saved to wishlist", { action: { label: "View", onClick: () => router.push("/account/wishlist") } });
   }
 

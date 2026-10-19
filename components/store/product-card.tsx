@@ -1,12 +1,13 @@
 import Link from "next/link";
 import Image from "next/image";
 import type { ProductCard as ProductCardType } from "@/types";
-import { cn, conditionLabel, discountPercent, isSvg, withMemoryUnit } from "@/lib/utils";
+import { cn, conditionLabel, discountPercent, effectivePrice, isSvg, withMemoryUnit } from "@/lib/utils";
 import { AvailabilityBadge, PriceTag, RatingStars } from "@/components/store/product-bits";
 import { AddToCartButton } from "@/components/store/add-to-cart-button";
 import { WishlistButton } from "@/components/store/wishlist-button";
+import { TrackItemList } from "@/components/tracking/track-events";
 
-export function ProductCard({ product, priority = false }: { product: ProductCardType; priority?: boolean }) {
+export function ProductCard({ product, priority = false, listName, index }: { product: ProductCardType; priority?: boolean; listName?: string; index?: number }) {
   const off = discountPercent(product.price, product.sale_price);
   const specLine = [
     product.ram_options[0] && `${product.ram_options.map(withMemoryUnit).join("/")} RAM`,
@@ -16,7 +17,15 @@ export function ProductCard({ product, priority = false }: { product: ProductCar
     .join(", ");
 
   return (
-    <article className="group relative flex h-full flex-col overflow-hidden rounded-[var(--radius-card)] border border-line bg-surface transition-[border-color,box-shadow] duration-200 hover:border-brand/50 hover:shadow-[var(--shadow-lift)]">
+    <article
+      className="group relative flex h-full flex-col overflow-hidden rounded-[var(--radius-card)] border border-line bg-surface transition-[border-color,box-shadow] duration-200 hover:border-brand/50 hover:shadow-[var(--shadow-lift)]"
+      // read by the storefront tracking when the product link is clicked (select_item)
+      data-track-item={
+        listName
+          ? JSON.stringify({ id: product.id, name: product.name, price: effectivePrice(product.price, product.sale_price), brand: product.brand_name, list: listName, index })
+          : undefined
+      }
+    >
       <div className="relative aspect-square bg-gradient-to-b from-paper to-surface">
         {product.image_url ? (
           <Image
@@ -95,20 +104,26 @@ export function ProductGrid({
   className,
   priorityCount = 0,
   rails = false,
+  listName,
 }: {
   products: ProductCardType[];
   className?: string;
   priorityCount?: number;
   rails?: boolean;
+  /** Name for view_item_list / select_item tracking (lists without one are not tracked). */
+  listName?: string;
 }) {
   return (
+    <>
+    {listName ? <TrackItemList listName={listName} products={products} /> : null}
     <ul className={cn("grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5", className)}>
       {products.map((p, i) => (
         <li key={p.id} className={cn(rails && i >= 8 && "hidden xl:block", rails && i >= 6 && i < 8 && "hidden lg:block")}>
-          <ProductCard product={p} priority={i < priorityCount} />
+          <ProductCard product={p} priority={i < priorityCount} listName={listName} index={i} />
         </li>
       ))}
     </ul>
+    </>
   );
 }
 

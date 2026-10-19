@@ -22,6 +22,7 @@ export const CACHE_TAGS = {
   navigation: "navigation", // brands + categories
   catalog: "catalog",
   homepage: "homepage",
+  tracking: "tracking", // public tracking IDs + consent settings (Admin → Analytics & Tracking)
 } as const;
 
 type Tag = (typeof CACHE_TAGS)[keyof typeof CACHE_TAGS];
@@ -84,4 +85,10 @@ export function invalidateContent() {
 export function invalidateHomepage() {
   expireTags([CACHE_TAGS.homepage]);
   revalidatePath("/");
+}
+
+/** Tracking IDs, routing or consent settings changed: every storefront page embeds them. */
+export function invalidateTracking() {
+  expireTags([CACHE_TAGS.tracking]);
+  revalidatePath("/", "layout");
 }

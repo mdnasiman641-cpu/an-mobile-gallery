@@ -23,7 +23,7 @@ import { RichText } from "@/components/ui/rich-text";
 import { JsonLd } from "@/components/seo/json-ld";
 import { breadcrumbJsonLd, productJsonLd } from "@/lib/jsonld";
 import { absoluteUrl, buildMetadata, productSeoDescription, productSeoTitle } from "@/lib/seo";
-import { MEMORY_SPEC_NAME, conditionLabel, formatDate, formatPrice, withMemoryUnit } from "@/lib/utils";
+import { MEMORY_SPEC_NAME, conditionLabel, effectivePrice, formatDate, formatPrice, withMemoryUnit } from "@/lib/utils";
 import type { ProductSpecification } from "@/types";
 import { withSiteDefaults } from "@/lib/page-metadata";
 
@@ -173,13 +173,15 @@ export default async function ProductPage({ params }: Props) {
                   low_stock_threshold: product.low_stock_threshold,
                   status: product.status,
                   image: product.images[0]?.url ?? null,
+                  brand: product.brand?.name ?? null,
+                  category: product.category?.name ?? null,
                 }}
                 variants={product.variants}
                 whatsapp={settings.whatsapp}
               />
             </Suspense>
             <div className="mt-1 border-t border-line pt-2">
-              <WishlistButton productId={product.id} productSlug={product.slug} />
+              <WishlistButton productId={product.id} productSlug={product.slug} productName={product.name} />
             </div>
           </div>
 
@@ -335,7 +337,7 @@ export default async function ProductPage({ params }: Props) {
       {recommendations.related.length ? (
         <section className="mt-14" aria-labelledby="related">
           <SectionHeading id="related" title="Related products" href={product.category ? `/categories/${product.category.slug}` : "/products"} />
-          <ProductGrid products={recommendations.related.slice(0, 5)} />
+          <ProductGrid products={recommendations.related.slice(0, 5)} listName="Related products" />
         </section>
       ) : null}
 
@@ -346,11 +348,19 @@ export default async function ProductPage({ params }: Props) {
             title={product.brand ? `Frequently viewed ${product.brand.name} products` : "Frequently viewed"}
             href={product.brand ? `/brands/${product.brand.slug}` : "/products"}
           />
-          <ProductGrid products={recommendations.frequentlyViewed.slice(0, 5)} />
+          <ProductGrid products={recommendations.frequentlyViewed.slice(0, 5)} listName="Frequently viewed" />
         </section>
       ) : null}
 
-      <ViewTracker productId={product.id} />
+      <ViewTracker
+        productId={product.id}
+        tracking={{
+          name: product.name,
+          price: effectivePrice(product.price, product.sale_price),
+          brand: product.brand?.name ?? null,
+          category: product.category?.name ?? null,
+        }}
+      />
       <JsonLd data={productJsonLd(product, { settings, storeName: settings.store_name, reviews, url })} />
       <JsonLd data={breadcrumbJsonLd(crumbs)} />
     </div>

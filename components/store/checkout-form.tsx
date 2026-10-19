@@ -12,6 +12,7 @@ import { Field, Input, Textarea } from "@/components/ui/form";
 import { EmptyState, Skeleton } from "@/components/ui/misc";
 import { cn, formatPrice, isSvg } from "@/lib/utils";
 import type { DeliveryZone } from "@/types";
+import { cartTrackItem, itemsEvent, track, trackPurchase } from "@/lib/tracking/client";
 
 interface Props {
   deliveryInside: number;
@@ -61,6 +62,21 @@ export function CheckoutForm({ deliveryInside, deliveryOutside, freeThreshold, s
   const [couponMsg, setCouponMsg] = useState<string | null>(null);
   const [checkingCoupon, setCheckingCoupon] = useState(false);
   const [confirmation, setConfirmation] = useState<OrderConfirmation | null>(null);
+
+  // ---- tracking (each sent only with the visitor's consent; see lib/tracking/client.ts)
+  const began = useRef(false);
+  const shippingSent = useRef(false);
+  const paymentSentFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!ready || began.current || items.length === 0 || confirmation) return;
+    began.current = true;
+    track(itemsEvent("begin_checkout", items.map((i) => cartTrackItem(i))));
+  }, [ready, items, confirmation]);
+  function shippingInfo(z: DeliveryZone) {
+    if (shippingSent.current || items.length === 0) return;
+    shippingSent.current = true;
+    track(itemsEvent("add_shipping_info", items.map((i) => cartTrackItem(i)), { shipping_tier: ZONES.find((x) => x.value === z)?.label ?? z }));
+  }
 
   if (confirmation) {
     return (
@@ -149,6 +165,12 @@ export function CheckoutForm({ deliveryInside, deliveryOutside, freeThreshold, s
     submitting.current = true;
     requestId.current ??= newRequestId();
     setFormError(null);
+    // the customer submitted the order with Cash on Delivery (once per attempt; NOT the purchase)
+    shippingInfo(zone);
+    if (paymentSentFor.current !== requestId.current) {
+      paymentSentFor.current = requestId.current;
+      track(itemsEvent("add_payment_info", items.map((i) => cartTrackItem(i)), { payment_type: "Cash on Delivery", ...(coupon?.code ? { coupon: coupon.code } : {}) }));
+    }
     const payload = {
       request_id: requestId.current,
       customer_name: String(form.get("customer_name") ?? ""),
@@ -180,6 +202,9 @@ export function CheckoutForm({ deliveryInside, deliveryOutside, freeThreshold, s
       }
       requestId.current = null;
       setErrors({});
+      // Purchase: only after the server created the order; same event_id as the server copy
+      const purchase = res.data?.tracking;
+      if (purchase) trackPurchase(purchase.event, { skipGa4: purchase.ga4ServerIds, userData: { email: payload.email, phone: payload.phone } });
       clear();
       setConfirmation(res.data!);
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -233,7 +258,10 @@ export function CheckoutForm({ deliveryInside, deliveryOutside, freeThreshold, s
                       zone === z.value ? "border-ink ring-1 ring-ink" : "border-line-strong hover:border-ink",
                     )}
                   >
-                    <input type="radio" name="zone" value={z.value} checked={zone === z.value} onChange={() => setZone(z.value)} className="sr-only" />
+                    <input type="radio" name="zone" value={z.value} checked={zone === z.value} onChange={() => {
+                        setZone(z.value);
+                        shippingInfo(z.value);
+                      }} className="sr-only" />
                     <span className="text-sm font-semibold">{z.label}</span>
                     <span className="bn text-xs text-ink-mute">{z.labelBn}</span>
                     <span className="price mt-1 text-sm">{fee ? formatPrice(fee) : "Free"}</span>

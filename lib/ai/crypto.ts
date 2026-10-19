@@ -30,7 +30,7 @@ const MASTER_KEY_PATH = "__app-secrets/ai-provider-keys/master-key.v1";
 const HKDF_INFO = "an-mobile-gallery/ai-provider-keys/v1";
 
 /** The part of an R2 binding used here (avoids depending on workers-types). */
-interface SecretBucket {
+export interface SecretBucket {
   get(key: string): Promise<{ text(): Promise<string> } | null>;
   put(key: string, value: string, options?: { customMetadata?: Record<string, string> }): Promise<unknown>;
 }
@@ -48,6 +48,11 @@ function fromB64(b64: string): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+
+/** The Worker's private R2 bucket (null when not running on Cloudflare). Also used for the tracking server key. */
+export async function secretBucket(): Promise<SecretBucket | null> {
+  return bucket();
 }
 
 async function bucket(): Promise<SecretBucket | null> {

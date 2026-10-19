@@ -25,6 +25,7 @@ import {
   UserCog,
   Users,
   X,
+  Activity,
 } from "lucide-react";
 import { signOutAction } from "@/app/(store)/account/actions";
 import { cn } from "@/lib/utils";
@@ -48,6 +49,7 @@ const NAV: { href: string; label: string; Icon: typeof Package; min: StaffRole }
   { href: "/admin/settings", label: "Settings", Icon: Settings, min: "admin" },
   { href: "/admin/settings/ai", label: "AI settings", Icon: Bot, min: "admin" },
   { href: "/admin/settings/courier", label: "Courier", Icon: Truck, min: "admin" },
+  { href: "/admin/settings/tracking", label: "Analytics & tracking", Icon: Activity, min: "admin" },
   { href: "/admin/users", label: "Staff users", Icon: UserCog, min: "super_admin" },
 ];
 
