@@ -34,6 +34,29 @@ function expireTags(tags: Tag[]) {
 }
 
 /**
+ * Stale-while-revalidate for data that every storefront page reads (site
+ * settings, menus, tracking IDs). Every cached page carries these tags, so
+ * expiring them (or revalidatePath("/", "layout")) forced a full server render
+ * of EVERY page on its next visit, all inside visitors' requests. On Workers
+ * Free that burst exceeded the CPU limit (Error 1102 right after admin saves
+ * on 2026-10-20). With "max", each page is served once more from cache and
+ * regenerated in the background (OpenNext queue, one render per page); the
+ * regeneration waits for fresh data, so the next visitor sees the change.
+ * Not used for prices or stock: those keep expireTags().
+ */
+function staleTags(tags: Tag[]) {
+  for (const tag of tags) revalidateTag(tag, "max");
+}
+
+/**
+ * Dynamic pages that show money from site settings (delivery charges). Their
+ * own path tag is expired, so their next render reads the settings fresh
+ * instead of the stale copy. They are rendered per request anyway (no cached
+ * page), so this adds no render work.
+ */
+const SETTINGS_MONEY_PATHS = ["/cart", "/checkout"] as const;
+
+/**
  * Pages that list products. A product change refreshes these, not the whole
  * site: revalidatePath("/", "layout") used to mark EVERY cached page stale
  * (all product, brand, category and info pages), and on Cloudflare Workers
@@ -69,16 +92,22 @@ export function invalidateStock(slugs: (string | null | undefined)[]) {
   revalidatePath("/");
 }
 
-/** Brand or category changed (also affects menus). */
+/**
+ * Brand or category changed. Product listings (catalog) refresh now; menus on
+ * every other page refresh in the background (see staleTags).
+ */
 export function invalidateTaxonomy() {
-  expireTags([CACHE_TAGS.navigation, CACHE_TAGS.catalog]);
-  revalidatePath("/", "layout");
+  expireTags([CACHE_TAGS.catalog]);
+  staleTags([CACHE_TAGS.navigation]);
 }
 
-/** Site/SEO settings, banners or pages changed. */
+/**
+ * Site/SEO settings, banners, pages or favicon changed: every page refreshes
+ * in the background (see staleTags); cart and checkout read them fresh.
+ */
 export function invalidateContent() {
-  expireTags([CACHE_TAGS.settings]);
-  revalidatePath("/", "layout");
+  staleTags([CACHE_TAGS.settings]);
+  for (const path of SETTINGS_MONEY_PATHS) revalidatePath(path);
 }
 
 /** Homepage Management saved: refresh only the homepage. */
@@ -89,6 +118,5 @@ export function invalidateHomepage() {
 
 /** Tracking IDs, routing or consent settings changed: every storefront page embeds them. */
 export function invalidateTracking() {
-  expireTags([CACHE_TAGS.tracking]);
-  revalidatePath("/", "layout");
+  staleTags([CACHE_TAGS.tracking]);
 }
