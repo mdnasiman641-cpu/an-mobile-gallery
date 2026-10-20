@@ -1,11 +1,15 @@
 import Link from "next/link";
 import Image from "next/image";
-import { ChevronDown, Clock, GitCompareArrows, LayoutGrid, MapPin, Phone, ShieldCheck } from "lucide-react";
+import { ChevronDown, GitCompareArrows, LayoutGrid } from "lucide-react";
 import { buildCategoryTree, getBrands, getCategories } from "@/services/catalog";
 import { getSiteSettings } from "@/services/settings";
+import { getHeaderConfig, renderTime } from "@/services/header";
+import { AnnouncementBar } from "@/components/store/announcement-bar";
+import { LocationsMenu } from "@/components/store/locations-menu";
+import { messagesForPage, visibleOutlets } from "@/lib/header-config";
 import { SearchBox } from "@/components/store/search-box";
 import { AccountLink, CartLink, CompareLink, MobileMenu } from "@/components/store/header-actions";
-import { STORE_AREA, STORE_SERVICES, TOP_BAR_HIGHLIGHTS } from "@/lib/storefront";
+import { STORE_SERVICES } from "@/lib/storefront";
 import { isSvg } from "@/lib/utils";
 
 /** "AN MOBILE GALLERY" → "AN"; "Star Phones" → "SP". */
@@ -66,7 +70,10 @@ const dropdown =
   "invisible absolute left-0 top-full z-50 rounded-[var(--radius-card)] border border-line bg-surface p-1.5 text-ink opacity-0 shadow-[var(--shadow-soft)] transition-opacity group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100";
 
 export async function StoreHeader() {
-  const [categories, brands, settings] = await Promise.all([getCategories(), getBrands(), getSiteSettings()]);
+  const [categories, brands, settings, header] = await Promise.all([getCategories(), getBrands(), getSiteSettings(), getHeaderConfig()]);
+  const renderedAt = renderTime();
+  const barMessages = messagesForPage(header, renderedAt);
+  const outlets = visibleOutlets(header.outlets);
   const tree = buildCategoryTree(categories);
   const menuCategories = tree.map((c) => ({
     name: c.name,
@@ -74,42 +81,11 @@ export async function StoreHeader() {
     children: c.children.map((ch) => ({ name: ch.name, slug: ch.slug })),
   }));
   const topBrands = (brands.some((b) => b.is_featured) ? brands.filter((b) => b.is_featured) : brands).slice(0, 10);
-  const tagline = settings.tagline_bn || settings.tagline;
 
   return (
     <>
-      {/* slim utility bar (scrolls away) */}
-      <div className="bg-board text-[12.5px] text-white/85">
-        <div className="container-page flex h-9 items-center justify-between gap-4">
-          {tagline ? <p className={`${settings.tagline_bn ? "bn " : ""}min-w-0 truncate font-medium text-white xl:shrink-0`}>{tagline}</p> : <span />}
-          <ul className="hidden items-center gap-5 xl:flex" aria-label="Why shop with us">
-            {TOP_BAR_HIGHLIGHTS.map((h) => (
-              <li key={h} className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                <ShieldCheck className="h-3.5 w-3.5 text-[#6ee7b7]" aria-hidden />
-                {h}
-              </li>
-            ))}
-          </ul>
-          <div className="flex shrink-0 items-center gap-4">
-            <span className="hidden items-center gap-1.5 whitespace-nowrap md:inline-flex">
-              <MapPin className="h-3.5 w-3.5" aria-hidden />
-              {STORE_AREA}
-            </span>
-            {settings.opening_hours ? (
-              <span className="hidden items-center gap-1.5 whitespace-nowrap lg:inline-flex xl:hidden 2xl:inline-flex">
-                <Clock className="h-3.5 w-3.5" aria-hidden />
-                {settings.opening_hours}
-              </span>
-            ) : null}
-            {settings.phone ? (
-              <a href={`tel:${settings.phone}`} className="inline-flex items-center gap-1.5 whitespace-nowrap font-semibold text-white hover:underline">
-                <Phone className="h-3.5 w-3.5" aria-hidden />
-                {settings.phone}
-              </a>
-            ) : null}
-          </div>
-        </div>
-      </div>
+      {/* announcement bar (Admin → Settings): hidden unless switched on and something is live */}
+      {barMessages.length ? <AnnouncementBar bar={header.bar} messages={barMessages} renderedAt={renderedAt} /> : null}
 
       <header className="sticky top-0 z-40 border-b border-line bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/90">
         <div className="container-page flex h-16 items-center gap-2 lg:h-[78px] lg:gap-8">
@@ -231,6 +207,7 @@ export async function StoreHeader() {
               </Link>
             </li>
           </ul>
+          <LocationsMenu outlets={outlets} className="ml-1" />
           <Link
             href="/compare"
             className="ml-3 hidden h-9 shrink-0 items-center gap-2 rounded-full border border-white/35 px-4 text-[13px] font-semibold text-white hover:border-white hover:bg-white/10 xl:inline-flex"

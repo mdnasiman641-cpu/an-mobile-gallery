@@ -12,14 +12,6 @@ export const STORE_SERVICES = "Buy | Sell | Exchange | Installment";
 /** Short location label used when no full address is set in Admin → Settings. */
 export const STORE_AREA = "Kapasia, Gazipur";
 
-/** Highlights in the slim bar above the header (desktop). */
-export const TOP_BAR_HIGHLIGHTS = [
-  "100% Genuine Products",
-  "Easy EMI Installment",
-  "Buy | Sell | Exchange",
-  "Trusted Shop in Kapasia",
-] as const;
-
 export const EXCHANGE_PROMO = {
   titleBn: "পুরাতন ফোন দিয়ে নতুন ফোন নিন",
   subtitle: "Buy | Sell | Exchange",

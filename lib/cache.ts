@@ -23,6 +23,7 @@ export const CACHE_TAGS = {
   catalog: "catalog",
   homepage: "homepage",
   tracking: "tracking", // public tracking IDs + consent settings (Admin → Analytics & Tracking)
+  header: "header", // announcement bar + Locations (Admin → Settings)
 } as const;
 
 type Tag = (typeof CACHE_TAGS)[keyof typeof CACHE_TAGS];
@@ -119,4 +120,13 @@ export function invalidateHomepage() {
 /** Tracking IDs, routing or consent settings changed: every storefront page embeds them. */
 export function invalidateTracking() {
   staleTags([CACHE_TAGS.tracking]);
+}
+
+/**
+ * Announcement bar / Locations saved: only the header data. Pages refresh in
+ * the background (see staleTags); the bar's schedule is checked again in
+ * the visitor's browser, so a cached page never shows an ended offer.
+ */
+export function invalidateHeader() {
+  staleTags([CACHE_TAGS.header]);
 }

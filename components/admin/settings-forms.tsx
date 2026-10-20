@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { saveSeoSettingsAction, saveSiteSettingsAction } from "@/app/admin/(panel)/content-actions";
 import { saveFaviconAction } from "@/app/admin/(panel)/settings/branding-actions";
 import { FaviconField, type FaviconState } from "@/components/admin/favicon-field";
+import { saveHeaderSettingsAction } from "@/app/admin/(panel)/settings/header-actions";
+import { HeaderSettings, headerPayload, toHeaderDraft, type HeaderDraft } from "@/components/admin/header-settings";
+import { EMPTY_HEADER, type HeaderConfig } from "@/lib/header-config";
 import { ImageField, toastResult } from "@/components/admin/ui";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/form";
@@ -28,9 +31,22 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-export function SiteSettingsForm({ initial, favicon: savedFavicon }: { initial: SiteSettings; favicon: FaviconState }) {
+export function SiteSettingsForm({
+  initial,
+  favicon: savedFavicon,
+  header: savedHeader,
+}: {
+  initial: SiteSettings;
+  favicon: FaviconState;
+  /** null = migration 0018 not run yet */
+  header: HeaderConfig | null;
+}) {
   const router = useRouter();
   const [f, setF] = useState(toStrings(initial));
+  const [savedF, setSavedF] = useState(() => JSON.stringify(toStrings(initial)));
+  const [header, setHeader] = useState<HeaderDraft | null>(savedHeader ? toHeaderDraft(savedHeader) : null);
+  const [savedHeaderJson, setSavedHeaderJson] = useState(() => (savedHeader ? JSON.stringify(headerPayload(toHeaderDraft(savedHeader))) : ""));
+  const [headerErrors, setHeaderErrors] = useState<Record<string, string>>({});
   const [favicon, setFavicon] = useState<FaviconState>(savedFavicon);
   const [saved, setSaved] = useState<FaviconState>(savedFavicon);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -42,17 +58,41 @@ export function SiteSettingsForm({ initial, favicon: savedFavicon }: { initial: 
     "aria-invalid": Boolean(errors[k]) || undefined,
   });
 
+  const headerJson = header ? JSON.stringify(headerPayload(header)) : "";
+  const headerDirty = Boolean(header) && headerJson !== savedHeaderJson;
+  const siteDirty = JSON.stringify(f) !== savedF;
+  const faviconDirty = favicon.id !== saved.id;
+
   function save() {
     start(async () => {
+      if (!headerDirty && !siteDirty && !faviconDirty) {
+        toastResult({ ok: true, message: "No changes to save" });
+        return;
+      }
       // the favicon first: if it fails, nothing else is half-saved and the old icon stays
-      if (favicon.id !== saved.id) {
+      if (faviconDirty) {
         const fav = await saveFaviconAction(favicon.id);
         if (!toastResult(fav)) return;
         setSaved(favicon);
       }
-      const res = await saveSiteSettingsAction(f);
-      setErrors(res.fieldErrors ?? {});
-      if (toastResult(res)) router.refresh();
+      // header / Locations: its own data, refreshed on its own (only when changed)
+      if (headerDirty && header) {
+        const res = await saveHeaderSettingsAction(headerPayload(header));
+        setHeaderErrors(res.fieldErrors ?? {});
+        if (!toastResult(res)) return;
+        if (res.data) {
+          const next = toHeaderDraft(res.data);
+          setHeader(next);
+          setSavedHeaderJson(JSON.stringify(headerPayload(next)));
+        }
+      }
+      if (siteDirty || faviconDirty) {
+        const res = await saveSiteSettingsAction(f);
+        setErrors(res.fieldErrors ?? {});
+        if (!toastResult(res)) return;
+        setSavedF(JSON.stringify(f));
+      }
+      router.refresh();
     });
   }
 
@@ -151,8 +191,17 @@ export function SiteSettingsForm({ initial, favicon: savedFavicon }: { initial: 
         </Field>
       </Section>
 
+      <HeaderSettings
+        value={header ?? toHeaderDraft(EMPTY_HEADER)}
+        onChange={setHeader}
+        errors={headerErrors}
+        available={Boolean(header)}
+        store={{ name: f.store_name, address: f.address, phone: f.phone, whatsapp: f.whatsapp, hours: f.opening_hours, map_url: f.map_url }}
+      />
+
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 px-4 py-3 backdrop-blur lg:left-60">
-        <div className="mx-auto flex max-w-[1400px] justify-end md:px-2">
+        <div className="mx-auto flex max-w-[1400px] items-center justify-end gap-3 md:px-2">
+          {headerDirty || siteDirty || faviconDirty ? <span className="text-sm text-ink-mute">Unsaved changes</span> : null}
           <Button onClick={save} loading={pending}>
             Save settings
           </Button>

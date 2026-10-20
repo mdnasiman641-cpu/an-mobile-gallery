@@ -165,3 +165,43 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Header announcement bar (components/store/announcement-bar.tsx): one CSS
+   animation moves two identical copies; -50% = exactly one copy, so the loop
+   is seamless. Paused on hover (devices with a mouse) and while a link in it
+   has keyboard focus. */
+@keyframes marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+.marquee-track {
+  animation-name: marquee;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  will-change: transform;
+}
+.marquee:focus-within .marquee-track {
+  animation-play-state: paused;
+}
+@media (hover: hover) {
+  .marquee-pausable:hover .marquee-track {
+    animation-play-state: paused;
+  }
+}
+/* Reduced motion: no movement at all; the messages can be scrolled sideways. */
+@media (prefers-reduced-motion: reduce) {
+  .marquee {
+    overflow-x: auto !important;
+  }
+  .marquee-track {
+    animation: none !important;
+    transform: none !important;
+  }
+  .marquee-copy {
+    display: none !important;
+  }
+}
