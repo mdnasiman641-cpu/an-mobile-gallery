@@ -125,20 +125,25 @@ export const getProductBySlug = cache(async (slug: string): Promise<ProductDetai
   const supabase = getPublicClient();
   if (!supabase) return null;
 
-  const { data, error } = await supabase
-    .from("products")
-    .select(
-      `${PRODUCT_COLUMNS},
+  const load = (columns: string) =>
+    supabase
+      .from("products")
+      .select(
+        `${columns},
        brand:brands(id, name, slug, logo_url),
        category:categories(id, name, slug, parent_id),
        images:product_images(id, product_id, url, storage_path, alt_text, is_primary, sort_order, width, height),
        variants:product_variants(id, product_id, sku, storage, ram, color, color_hex, price, sale_price, stock, image_url, status, sort_order),
        specifications:product_specifications(id, product_id, group_name, name, value, sort_order),
        features:product_features(id, product_id, feature, sort_order)`,
-    )
-    .eq("slug", slug)
-    .in("status", ["active", "out_of_stock"])
-    .maybeSingle();
+      )
+      .eq("slug", slug)
+      .in("status", ["active", "out_of_stock"])
+      .maybeSingle();
+
+  // box_included exists once migration 0017 has run; before that the page loads without it
+  let { data, error } = await load(`${PRODUCT_COLUMNS}, box_included`);
+  if (error && /box_included/.test(error.message)) ({ data, error } = await load(PRODUCT_COLUMNS));
 
   if (error) fail("product", error.message);
   if (!data) return null;

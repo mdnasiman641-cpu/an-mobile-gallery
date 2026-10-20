@@ -31,6 +31,8 @@ export interface ProductFormValues {
   is_offer: boolean;
   is_best_seller: boolean;
   warranty: string;
+  /** "" = not specified (default, never guessed), "with" / "without" = confirmed by staff. */
+  box: BoxValue;
   meta_title: string;
   meta_description: string;
   canonical_url: string;
@@ -38,6 +40,13 @@ export interface ProductFormValues {
   specs: { group_name: string; name: string; value: string }[];
   features: string[];
   images: ImageRow[];
+}
+
+export type BoxValue = "" | "with" | "without";
+
+/** Database value (products.box_included) → form value. */
+export function boxValue(included: boolean | null | undefined): BoxValue {
+  return included === true ? "with" : included === false ? "without" : "";
 }
 
 export interface VariantRow {
@@ -89,6 +98,7 @@ export function emptyProductValues(): ProductFormValues {
     is_offer: false,
     is_best_seller: false,
     warranty: "",
+    box: "",
     meta_title: "",
     meta_description: "",
     canonical_url: "",

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { requireStaff } from "@/lib/auth";
+import { hasRole, requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { escapeFilter, getAdminTaxonomy } from "@/services/admin";
 import { AdminFilterBar, AdminPageHeader } from "@/components/admin/page-header";
@@ -14,41 +14,43 @@ export const metadata: Metadata = { title: "Products" };
 const PER_PAGE = 25;
 type SP = Record<string, string | undefined>;
 
+const LIST_COLUMNS =
+  "id, name, slug, sku, price, sale_price, stock_quantity, low_stock_threshold, status, featured, is_demo, updated_at, condition, category:categories(name), brand:brands(name), product_images(url, is_primary), product_variants(count)";
+
 export default async function AdminProductsPage({ searchParams }: { searchParams: Promise<SP> }) {
-  await requireStaff("editor");
+  const session = await requireStaff("editor");
   const sp = await searchParams;
   const page = Math.max(1, Number(sp.page) || 1);
   const supabase = await createClient();
   const { brands, categories } = await getAdminTaxonomy();
-
-  let query = supabase
-    .from("products")
-    .select(
-      "id, name, slug, sku, price, sale_price, stock_quantity, low_stock_threshold, status, featured, is_demo, updated_at, brand:brands(name), product_images(url, is_primary), product_variants(count)",
-      { count: "exact" },
-    );
-
   const q = escapeFilter(sp.q ?? "");
-  if (q) query = query.or(`name.ilike.%${q}%,sku.ilike.%${q}%,model.ilike.%${q}%`);
-  if (sp.status) query = query.eq("status", sp.status);
-  if (sp.brand) query = query.eq("brand_id", sp.brand);
-  if (sp.category) query = query.eq("category_id", sp.category);
-  if (sp.stock === "out") query = query.lte("stock_quantity", 0);
-  if (sp.stock === "low") query = query.gt("stock_quantity", 0).lte("stock_quantity", 3);
-  if (sp.demo === "1") query = query.eq("is_demo", true);
-  if (sp.demo === "0") query = query.eq("is_demo", false);
-
   const sort = sp.sort ?? "updated";
-  query =
-    sort === "name"
-      ? query.order("name")
-      : sort === "stock"
-        ? query.order("stock_quantity")
-        : sort === "price"
-          ? query.order("price")
-          : query.order("updated_at", { ascending: false });
 
-  const { data, count, error } = await query.range((page - 1) * PER_PAGE, page * PER_PAGE - 1);
+  const list = (columns: string) => {
+    let query = supabase.from("products").select(columns, { count: "exact" });
+    if (q) query = query.or(`name.ilike.%${q}%,sku.ilike.%${q}%,model.ilike.%${q}%`);
+    if (sp.status) query = query.eq("status", sp.status);
+    if (sp.brand) query = query.eq("brand_id", sp.brand);
+    if (sp.category) query = query.eq("category_id", sp.category);
+    if (sp.stock === "out") query = query.lte("stock_quantity", 0);
+    if (sp.stock === "low") query = query.gt("stock_quantity", 0).lte("stock_quantity", 3);
+    if (sp.demo === "1") query = query.eq("is_demo", true);
+    if (sp.demo === "0") query = query.eq("is_demo", false);
+    query =
+      sort === "name"
+        ? query.order("name")
+        : sort === "stock"
+          ? query.order("stock_quantity")
+          : sort === "price"
+            ? query.order("price")
+            : query.order("updated_at", { ascending: false });
+    return query.range((page - 1) * PER_PAGE, page * PER_PAGE - 1);
+  };
+
+  // box_included exists once migration 0017 has run; until then the list loads without it.
+  let res = await list(`${LIST_COLUMNS}, box_included`);
+  if (res.error && /box_included/.test(res.error.message)) res = await list(LIST_COLUMNS);
+  const { data, count, error } = res;
 
   const rows: AdminProductRow[] = ((data ?? []) as unknown as (Omit<AdminProductRow, "image" | "variant_count"> & {
     product_images: { url: string; is_primary: boolean }[];
@@ -145,7 +147,11 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
         />
       ) : (
         <>
-          <ProductTable rows={rows} />
+          <ProductTable
+            rows={rows}
+            canBulkEdit={hasRole(session, "admin")}
+            categories={categories.map((c) => ({ id: c.id, name: c.name, parent_id: c.parent_id, is_active: c.is_active }))}
+          />
           <Pagination page={page} totalPages={totalPages} buildHref={(p) => buildListingHref("/admin/products", sp, { page: p })} />
         </>
       )}

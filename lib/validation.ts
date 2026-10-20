@@ -47,6 +47,11 @@ export const productSchema = z
     is_offer: z.boolean(),
     is_best_seller: z.boolean(),
     warranty: optionalText(200),
+    // Original box: "" = not specified (null), never guessed. Missing = leave unchanged.
+    box_included: z
+      .enum(["", "with", "without"])
+      .optional()
+      .transform((v) => (v === undefined ? undefined : v === "with" ? true : v === "without" ? false : null)),
     meta_title: optionalText(120),
     meta_description: optionalText(320),
     canonical_url: optionalText(500).refine((v) => !v || /^https?:\/\//.test(v), "Canonical URL must start with https://"),

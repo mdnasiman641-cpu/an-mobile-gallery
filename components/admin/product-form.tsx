@@ -44,7 +44,7 @@ import { uploadImage } from "@/lib/image-upload";
 import { productSeoDescription, productSeoTitle } from "@/lib/seo";
 import { slugify } from "@/lib/slug";
 import { cn, conditionFromName, conditionLabel, discountPercent, formatPrice, isSvg } from "@/lib/utils";
-import type { ProductFormValues, VariantRow } from "@/lib/product-form-values";
+import type { BoxValue, ProductFormValues, VariantRow } from "@/lib/product-form-values";
 import type { Brand, Category, ProductCondition, ProductStatus } from "@/types";
 
 const TABS = ["Basic information", "Pricing", "Inventory", "Images", "Variants", "Specifications", "Description", "SEO"] as const;
@@ -239,6 +239,7 @@ export function ProductForm({
       is_offer: v.is_offer,
       is_best_seller: v.is_best_seller,
       warranty: v.warranty,
+      box_included: v.box,
       meta_title: v.meta_title,
       meta_description: v.meta_description,
       canonical_url: v.canonical_url,
@@ -553,7 +554,7 @@ export function ProductForm({
           >
             <Select id="condition" value={v.condition} onChange={(e) => set("condition", e.target.value as ProductCondition)}>
               <option value="new">New</option>
-              <option value="used">Used</option>
+              <option value="used">Used / Pre-owned</option>
               <option value="refurbished">Refurbished</option>
             </Select>
             {namedCondition && v.condition === "new" ? (
@@ -561,6 +562,13 @@ export function ProductForm({
                 Set Condition to {conditionLabel[namedCondition]}
               </button>
             ) : null}
+          </Field>
+          <Field label="Box" htmlFor="box" error={errors.box_included} hint="Only choose With box / Without box when you have checked it. Shown on the product card and page.">
+            <Select id="box" value={v.box} onChange={(e) => set("box", e.target.value as BoxValue)}>
+              <option value="">Not specified</option>
+              <option value="with">With box</option>
+              <option value="without">Without box</option>
+            </Select>
           </Field>
           <Field label="SKU" htmlFor="sku" error={errors.sku} hint="Your internal code, unique per product">
             <Input id="sku" value={v.sku} onChange={(e) => set("sku", e.target.value)} />

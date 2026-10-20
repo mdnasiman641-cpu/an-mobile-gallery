@@ -82,9 +82,10 @@ function buildOffer(args: {
     priceCurrency: args.currency,
     price: money(finalPrice),
     availability: availabilityUrl(args.stock, args.threshold, args.status),
-    itemCondition: CONDITION[args.condition] ?? CONDITION.new,
     seller: { "@type": "Organization", name: args.sellerName },
   };
+  // the product's real condition only; never defaults to "new"
+  if (CONDITION[args.condition]) offer.itemCondition = CONDITION[args.condition];
   if (args.name) offer.name = args.name;
   if (args.sku) offer.sku = args.sku;
   if (finalPrice < Number(args.price)) {

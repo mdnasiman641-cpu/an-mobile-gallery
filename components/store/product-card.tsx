@@ -44,12 +44,18 @@ export function ProductCard({ product, priority = false, listName, index }: { pr
           {off > 0 ? (
             <span className="rounded-md bg-deal px-1.5 py-0.5 text-[11px] font-bold leading-4 text-white">−{off}%</span>
           ) : null}
-          {product.condition !== "new" ? (
-            <span className="rounded-md bg-ink px-1.5 py-0.5 text-[11px] font-bold leading-4 text-white">
-              {conditionLabel[product.condition]}
-            </span>
-          ) : product.is_new ? (
-            <span className="rounded-md bg-signal px-1.5 py-0.5 text-[11px] font-bold leading-4 text-white">New</span>
+          {/* condition always shown: New / Used / Refurbished (products.condition) */}
+          <span
+            className={cn(
+              "rounded-md px-1.5 py-0.5 text-[11px] font-bold leading-4 text-white",
+              product.condition === "new" ? "bg-signal" : "bg-ink",
+            )}
+          >
+            {conditionLabel[product.condition]}
+          </span>
+          {/* only when staff confirmed it; unknown shows nothing */}
+          {product.box_included === true ? (
+            <span className="rounded-md border border-line bg-surface px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-ink">With box</span>
           ) : null}
         </div>
         <WishlistButton

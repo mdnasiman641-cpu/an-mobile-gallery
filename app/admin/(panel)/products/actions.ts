@@ -29,6 +29,20 @@ export type ProductPayload = z.input<typeof payloadSchema>;
 
 type Db = Awaited<ReturnType<typeof createClient>>;
 
+const BOX_MIGRATION =
+  "Box availability needs database migration 0017 (supabase/migrations/20261021000017_product_box.sql). Run it in the Supabase SQL editor first.";
+
+/** products.box_included doesn't exist yet (migration 0017 not run). */
+function withoutBox<T extends { box_included?: boolean | null }>(row: T): Omit<T, "box_included"> {
+  const copy: Partial<T> = { ...row };
+  delete copy.box_included;
+  return copy as Omit<T, "box_included">;
+}
+
+function isMissingBoxColumn(error: { code?: string; message?: string }): boolean {
+  return /box_included/.test(error.message ?? "") && (error.code === "42703" || error.code === "PGRST204" || /column|schema cache/i.test(error.message ?? ""));
+}
+
 /** Remove storage files that no product image row references any more. */
 async function removeOrphanFiles(supabase: Db, paths: string[]) {
   const unique = Array.from(new Set(paths.filter(Boolean)));
@@ -116,16 +130,25 @@ export async function saveProductAction(raw: ProductPayload): Promise<ActionResu
   let productId = payload.data.id ?? "";
   let slug = "";
   if (isNew) {
-    const { data, error } = await supabase.from("products").insert({ ...row, stock_quantity: 0 }).select("id, slug").single();
+    let { data, error } = await supabase.from("products").insert({ ...row, stock_quantity: 0 }).select("id, slug").single();
+    if (error && isMissingBoxColumn(error) && row.box_included == null) {
+      // migration 0017 not run yet and nothing to store: save without the field
+      ({ data, error } = await supabase.from("products").insert({ ...withoutBox(row), stock_quantity: 0 }).select("id, slug").single());
+    }
     if (error) {
+      if (isMissingBoxColumn(error)) return { ok: false, message: BOX_MIGRATION, fieldErrors: { box_included: "Needs database migration 0017" } };
       if (error.code === "23505") return { ok: false, message: "That SKU is already used by another product.", fieldErrors: { sku: "SKU already in use" } };
       return { ok: false, message: `Product couldn't be saved: ${error.message}` };
     }
     productId = (data as { id: string }).id;
     slug = (data as { slug: string }).slug;
   } else {
-    const { data, error } = await supabase.from("products").update(row).eq("id", productId).select("slug").single();
+    let { data, error } = await supabase.from("products").update(row).eq("id", productId).select("slug").single();
+    if (error && isMissingBoxColumn(error) && row.box_included == null) {
+      ({ data, error } = await supabase.from("products").update(withoutBox(row)).eq("id", productId).select("slug").single());
+    }
     if (error) {
+      if (isMissingBoxColumn(error)) return { ok: false, message: BOX_MIGRATION, fieldErrors: { box_included: "Needs database migration 0017" } };
       if (error.code === "23505") return { ok: false, message: "That SKU is already used by another product.", fieldErrors: { sku: "SKU already in use" } };
       return { ok: false, message: `Product couldn't be saved: ${error.message}` };
     }
@@ -272,4 +295,81 @@ export async function bulkProductsAction(
   invalidateProduct(slugs);
   const verb = { active: "published", draft: "moved to draft", archived: "archived", out_of_stock: "marked out of stock", delete: "deleted", feature: "featured", unfeature: "unfeatured" }[op];
   return { ok: true, message: `${clean.length} product${clean.length === 1 ? "" : "s"} ${verb}` };
+}
+
+// ---------------------------------------------------------------------------
+// Bulk: change category / condition / box availability (admins only)
+// ---------------------------------------------------------------------------
+
+const bulkFieldSchema = z.discriminatedUnion("field", [
+  z.object({ field: z.literal("category"), categoryId: z.string().uuid() }),
+  z.object({ field: z.literal("condition"), value: z.enum(["new", "used"]) }),
+  z.object({ field: z.literal("box"), value: z.enum(["with", "without"]) }),
+]);
+export type BulkFieldChange = z.input<typeof bulkFieldSchema>;
+
+export interface BulkFieldResult {
+  requested: number;
+  updated: number;
+  failed: number;
+}
+
+const BULK_MAX = 200;
+const plural = (n: number) => `${n} product${n === 1 ? "" : "s"}`;
+
+/**
+ * Sets ONE field (category_id, condition or box_included) on the selected
+ * products with a single UPDATE. No other column is sent, so prices, stock,
+ * images, variants, specs, warranty and SEO stay as they are. Rows that
+ * weren't updated (deleted meanwhile, or not visible) are reported as failed.
+ */
+export async function bulkSetProductFieldAction(ids: unknown, change: unknown): Promise<ActionResult<BulkFieldResult>> {
+  const session = await assertStaff("admin");
+  if ("error" in session) return { ok: false, message: session.error };
+
+  if (!Array.isArray(ids) || ids.length === 0) return { ok: false, message: "Select at least one product." };
+  if (ids.length > BULK_MAX) return { ok: false, message: `Select at most ${BULK_MAX} products at a time.` };
+  const clean = Array.from(new Set(ids.filter((id): id is string => typeof id === "string" && z.string().uuid().safeParse(id).success)));
+  if (clean.length !== ids.length) return { ok: false, message: "The selection is invalid. Reload the page and try again." };
+
+  const parsed = bulkFieldSchema.safeParse(change);
+  if (!parsed.success) return { ok: false, message: "Choose a value to apply." };
+  const c = parsed.data;
+  const supabase = await createClient();
+
+  let patch: { category_id: string } | { condition: "new" | "used" } | { box_included: boolean };
+  let label: string;
+  if (c.field === "category") {
+    const { data: cat, error } = await supabase.from("categories").select("id, name").eq("id", c.categoryId).maybeSingle();
+    if (error) return { ok: false, message: "Categories couldn't be checked. Please try again." };
+    if (!cat) return { ok: false, message: "That category no longer exists. Reload the page and choose another." };
+    patch = { category_id: c.categoryId };
+    label = `moved to “${(cat as { name: string }).name}”`;
+  } else if (c.field === "condition") {
+    patch = { condition: c.value };
+    label = `set to ${c.value === "new" ? "New" : "Used / Pre-owned"}`;
+  } else {
+    patch = { box_included: c.value === "with" };
+    label = `set to ${c.value === "with" ? "With box" : "Without box"}`;
+  }
+
+  const { data, error } = await supabase.from("products").update(patch).in("id", clean).select("id, slug");
+  if (error) {
+    if (c.field === "box" && isMissingBoxColumn(error)) return { ok: false, message: BOX_MIGRATION };
+    return { ok: false, message: "No products were updated: the database refused the change. Please try again." };
+  }
+
+  const rows = (data ?? []) as { id: string; slug: string }[];
+  const result: BulkFieldResult = { requested: clean.length, updated: rows.length, failed: clean.length - rows.length };
+  if (rows.length) invalidateProduct(rows.map((r) => r.slug)); // bounded: these pages + listing pages
+
+  if (result.updated === 0) return { ok: false, message: "No products were updated. They may have been deleted. Reload the page.", data: result };
+  if (result.failed > 0) {
+    return {
+      ok: false,
+      message: `Only ${plural(result.updated)} of ${result.requested} ${label}. ${plural(result.failed)} couldn't be updated (deleted or no longer available). Reload to check.`,
+      data: result,
+    };
+  }
+  return { ok: true, message: `${plural(result.updated)} ${label}`, data: result };
 }

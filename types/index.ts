@@ -68,6 +68,8 @@ export interface ProductCard {
   ram_options: string[];
   storage_options: string[];
   created_at: string;
+  /** true = with box (confirmed), false = without box, null/undefined = not specified. */
+  box_included?: boolean | null;
   total_count?: number;
 }
 
@@ -138,6 +140,8 @@ export interface Product {
   is_offer: boolean;
   is_best_seller: boolean;
   warranty: string | null;
+  /** Original box: true = with box, false = without box, null/undefined = not specified (or migration 0017 not run). */
+  box_included?: boolean | null;
   meta_title: string | null;
   meta_description: string | null;
   canonical_url: string | null;

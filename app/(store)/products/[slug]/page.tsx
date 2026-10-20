@@ -23,7 +23,7 @@ import { RichText } from "@/components/ui/rich-text";
 import { JsonLd } from "@/components/seo/json-ld";
 import { breadcrumbJsonLd, productJsonLd } from "@/lib/jsonld";
 import { absoluteUrl, buildMetadata, productSeoDescription, productSeoTitle } from "@/lib/seo";
-import { MEMORY_SPEC_NAME, conditionLabel, effectivePrice, formatDate, formatPrice, withMemoryUnit } from "@/lib/utils";
+import { MEMORY_SPEC_NAME, boxLabel, conditionLabel, effectivePrice, formatDate, formatPrice, withMemoryUnit } from "@/lib/utils";
 import type { ProductSpecification } from "@/types";
 import { withSiteDefaults } from "@/lib/page-metadata";
 
@@ -135,6 +135,12 @@ export default async function ProductPage({ params }: Props) {
               <dt>Condition:</dt>
               <dd className="font-medium text-ink">{conditionLabel[product.condition]}</dd>
             </div>
+            {boxLabel(product.box_included) ? (
+              <div className="flex gap-1">
+                <dt>Box:</dt>
+                <dd className="font-medium text-ink">{boxLabel(product.box_included)}</dd>
+              </div>
+            ) : null}
           </dl>
           {product.rating_count > 0 ? (
             <a href="#reviews" className="mt-2 inline-flex">

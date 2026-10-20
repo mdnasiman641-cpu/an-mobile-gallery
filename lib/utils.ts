@@ -45,6 +45,11 @@ export const conditionLabel: Record<ProductCondition, string> = {
   refurbished: "Refurbished",
 };
 
+/** "With box" / "Without box" only when staff confirmed it; null when not specified. */
+export function boxLabel(included: boolean | null | undefined): string | null {
+  return included === true ? "With box" : included === false ? "Without box" : null;
+}
+
 export const statusLabel: Record<ProductStatus, string> = {
   active: "Active",
   draft: "Draft",

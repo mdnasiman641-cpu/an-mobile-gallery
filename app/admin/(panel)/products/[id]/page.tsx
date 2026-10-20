@@ -6,7 +6,7 @@ import { getAdminTaxonomy } from "@/services/admin";
 import { getSiteSettings } from "@/services/settings";
 import { AdminPageHeader } from "@/components/admin/page-header";
 import { ProductForm } from "@/components/admin/product-form";
-import type { ProductFormValues } from "@/lib/product-form-values";
+import { boxValue, type ProductFormValues } from "@/lib/product-form-values";
 import { Badge } from "@/components/ui/misc";
 import { statusLabel } from "@/lib/utils";
 import { AiAssistant, type AssistantProps } from "@/components/admin/ai-assistant";
@@ -88,6 +88,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
     is_offer: p.is_offer,
     is_best_seller: p.is_best_seller,
     warranty: s(p.warranty),
+    box: boxValue(p.box_included),
     meta_title: s(p.meta_title),
     meta_description: s(p.meta_description),
     canonical_url: s(p.canonical_url),
