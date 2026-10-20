@@ -7,6 +7,9 @@ import { getHeaderConfig, renderTime } from "@/services/header";
 import { AnnouncementBar } from "@/components/store/announcement-bar";
 import { LocationsMenu } from "@/components/store/locations-menu";
 import { messagesForPage, visibleOutlets } from "@/lib/header-config";
+import { readNav, resolveNav } from "@/lib/navigation";
+import { MainNavBar } from "@/components/store/main-nav";
+import { ActiveNav } from "@/components/store/nav-client";
 import { SearchBox } from "@/components/store/search-box";
 import { AccountLink, CartLink, CompareLink, MobileMenu } from "@/components/store/header-actions";
 import { STORE_SERVICES } from "@/lib/storefront";
@@ -74,6 +77,9 @@ export async function StoreHeader() {
   const renderedAt = renderTime();
   const barMessages = messagesForPage(header, renderedAt);
   const outlets = visibleOutlets(header.outlets);
+  // Admin → Settings → Header & Navigation; null = the built-in menu below
+  const navConfig = readNav(header.nav);
+  const nav = navConfig ? resolveNav(navConfig, categories, brands) : null;
   const tree = buildCategoryTree(categories);
   const menuCategories = tree.map((c) => ({
     name: c.name,
@@ -94,6 +100,7 @@ export async function StoreHeader() {
             brands={brands.map((b) => ({ name: b.name, slug: b.slug }))}
             storeName={settings.store_name}
             phone={settings.phone}
+            nav={nav}
           />
           <Link href="/" className="mr-auto min-w-0 lg:mr-0 lg:shrink-0" aria-label={`${settings.store_name} home`}>
             <Logo name={settings.store_name} logoUrl={settings.logo_url} subline={STORE_SERVICES} />
@@ -111,6 +118,12 @@ export async function StoreHeader() {
       </header>
 
       {/* green navigation bar */}
+      {nav && navConfig ? (
+        <>
+          <MainNavBar items={nav} style={navConfig.style} after={<LocationsMenu outlets={outlets} className="ml-1" />} />
+          <ActiveNav />
+        </>
+      ) : (
       <nav aria-label="Main" className="bg-gradient-to-r from-signal to-[#0c8667] text-white">
         <div className="container-page flex items-center">
           <ul className="no-scrollbar -mx-4 flex flex-1 items-center overflow-x-auto px-4 lg:mx-0 lg:overflow-visible lg:px-0">
@@ -217,6 +230,7 @@ export async function StoreHeader() {
           </Link>
         </div>
       </nav>
+      )}
     </>
   );
 }

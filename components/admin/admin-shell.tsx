@@ -48,6 +48,7 @@ const NAV: { href: string; label: string; Icon: typeof Package; min: StaffRole }
   { href: "/admin/guides", label: "Guides", Icon: BookOpen, min: "editor" },
   { href: "/admin/seo", label: "SEO", Icon: Search, min: "admin" },
   { href: "/admin/settings", label: "Settings", Icon: Settings, min: "admin" },
+  { href: "/admin/settings/navigation", label: "Navigation", Icon: Menu, min: "admin" },
   { href: "/admin/settings/ai", label: "AI settings", Icon: Bot, min: "admin" },
   { href: "/admin/settings/courier", label: "Courier", Icon: Truck, min: "admin" },
   { href: "/admin/settings/tracking", label: "Analytics & tracking", Icon: Activity, min: "admin" },

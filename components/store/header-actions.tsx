@@ -7,6 +7,8 @@ import { ChevronRight, GitCompareArrows, Menu, ShoppingBag, User, X } from "luci
 import { useStore } from "@/components/providers";
 import { OverlayPortal, useModalOverlay } from "@/components/ui/overlay";
 import { cn } from "@/lib/utils";
+import type { ResolvedNavItem } from "@/lib/navigation";
+import { MobileNavList } from "@/components/store/nav-client";
 
 export function CartLink({ className }: { className?: string }) {
   const { count, ready } = useStore();
@@ -71,11 +73,14 @@ export function MobileMenu({
   brands,
   storeName,
   phone,
+  nav = null,
 }: {
   categories: MenuCategory[];
   brands: { name: string; slug: string }[];
   storeName: string;
   phone: string | null;
+  /** Admin-managed menu (Header & Navigation); null = built-in sections. */
+  nav?: ResolvedNavItem[] | null;
 }) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
@@ -141,6 +146,16 @@ export function MobileMenu({
               </button>
             </div>
 
+            {nav ? (
+              <div className="px-2 py-3">
+                <MobileNavList items={nav} />
+                <Link href="/account" className={link}>
+                  My account
+                  <ChevronRight className="h-4 w-4 text-ink-mute" aria-hidden />
+                </Link>
+              </div>
+            ) : (
+              <>
             <div className="px-2 py-3">
               <Link href="/offers" className={link}>
                 Offers
@@ -186,6 +201,9 @@ export function MobileMenu({
                 ))}
               </div>
             </div>
+
+              </>
+            )}
 
             {phone ? (
               <div className="mt-auto border-t border-line p-4">

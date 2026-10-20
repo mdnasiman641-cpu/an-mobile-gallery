@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { requireStaff } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { AdminPageHeader } from "@/components/admin/page-header";
+import { ButtonLink } from "@/components/ui/button";
 import { SiteSettingsForm } from "@/components/admin/settings-forms";
 import { DEFAULT_SITE_SETTINGS } from "@/services/settings";
 import { supabaseUrl } from "@/lib/env";
@@ -27,7 +28,11 @@ export default async function AdminSettingsPage() {
     : { id: null, urls: null };
   return (
     <>
-      <AdminPageHeader title="Store settings" description="Logo and favicon, contact details, delivery charges, announcement bar and Locations." />
+      <AdminPageHeader
+        title="Store settings"
+        description="Logo and favicon, contact details, delivery charges, announcement bar and Locations."
+        actions={<ButtonLink href="/admin/settings/navigation" variant="outline">Header &amp; Navigation</ButtonLink>}
+      />
       <SiteSettingsForm initial={{ ...DEFAULT_SITE_SETTINGS, ...settings }} favicon={favicon} header={header} />
     </>
   );

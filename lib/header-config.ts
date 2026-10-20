@@ -82,6 +82,8 @@ export interface HeaderConfig {
   bar: HeaderBar;
   messages: HeaderMessage[];
   outlets: HeaderOutlet[];
+  /** Main menu (lib/navigation.ts); undefined/null = built-in menu. Saved separately. */
+  nav?: unknown;
 }
 
 /** Off and empty: nothing is shown until the admin configures it. */
