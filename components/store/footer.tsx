@@ -4,7 +4,7 @@ import { buildCategoryTree, getCategories } from "@/services/catalog";
 import { getSiteSettings } from "@/services/settings";
 import { Logo } from "@/components/store/header";
 import { CookieSettingsItem } from "@/components/tracking/tracking-root";
-import { STORE_AREA, STORE_SERVICES } from "@/lib/storefront";
+import { STORE_SERVICES } from "@/lib/storefront";
 import { currentYear, whatsappLink } from "@/lib/utils";
 
 const heading = "text-[15px] font-semibold text-white";
@@ -74,6 +74,16 @@ export async function StoreFooter() {
                 Offers
               </Link>
             </li>
+            <li>
+              <Link href="/collections/used-phones" className={linkCls}>
+                Used phones
+              </Link>
+            </li>
+            <li>
+              <Link href="/guides" className={linkCls}>
+                Buying guides
+              </Link>
+            </li>
           </ul>
         </div>
 
@@ -88,6 +98,11 @@ export async function StoreFooter() {
             <li>
               <Link href="/about" className={linkCls}>
                 About us
+              </Link>
+            </li>
+            <li>
+              <Link href="/shop-locations" className={linkCls}>
+                Shop locations
               </Link>
             </li>
             <li>
@@ -151,24 +166,17 @@ export async function StoreFooter() {
         </div>
 
         <div>
-          <p className={heading}>Shop location</p>
-          <div className="mt-4 flex gap-2.5 text-sm text-white/70">
+          <p className={heading}>Visit us</p>
+          <p className="mt-4 flex gap-2.5 text-sm text-white/70">
             <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#6ee7b7]" aria-hidden />
-            <span>
-              {settings.address || STORE_AREA}
-              {settings.address_bn ? <span className="bn mt-0.5 block text-white/55">{settings.address_bn}</span> : null}
-            </span>
-          </div>
-          {settings.map_url ? (
-            <a
-              href={settings.map_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-4 inline-flex h-10 items-center rounded-full bg-white px-5 text-sm font-semibold text-ink hover:bg-gold"
-            >
-              Get directions
-            </a>
-          ) : null}
+            Addresses, opening hours and directions for our shops.
+          </p>
+          <Link
+            href="/shop-locations"
+            className="mt-4 inline-flex h-10 items-center rounded-full bg-white px-5 text-sm font-semibold text-ink hover:bg-gold"
+          >
+            Shop Locations
+          </Link>
         </div>
       </div>
 

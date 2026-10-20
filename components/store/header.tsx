@@ -12,7 +12,7 @@ import { AccountLink, CartLink, CompareLink, MobileMenu } from "@/components/sto
 import { STORE_SERVICES } from "@/lib/storefront";
 import { isSvg } from "@/lib/utils";
 
-/** "AN MOBILE GALLERY" → "AN"; "Star Phones" → "SP". */
+/** "AN MOBILE GADGETS" → "AN"; "Star Phones" → "SP". */
 function brandInitials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return "";

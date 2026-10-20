@@ -10,7 +10,7 @@ export interface HeroSpotlight {
   detail: ProductDetail | null;
 }
 
-function Spotlight({ spotlight, imageOverride }: { spotlight: HeroSpotlight; imageOverride: string | null }) {
+function Spotlight({ spotlight, imageOverride, usedHref }: { spotlight: HeroSpotlight; imageOverride: string | null; usedHref: string | null }) {
   const { card, detail } = spotlight;
   const image = imageOverride ?? detail?.images[0]?.url ?? card.image_url;
   const imageAlt = detail?.images[0]?.alt_text || card.image_alt || card.name;
@@ -87,8 +87,8 @@ function Spotlight({ spotlight, imageOverride }: { spotlight: HeroSpotlight; ima
               Shop now
               <ArrowRight className="h-4 w-4" aria-hidden />
             </Link>
-            <Link href="/offers" className="inline-flex h-12 items-center px-2 text-[15px] font-semibold text-ink hover:text-signal hover:underline">
-              See all offers
+            <Link href={usedHref ?? "/offers"} className="inline-flex h-12 items-center px-2 text-[15px] font-semibold text-ink hover:text-signal hover:underline">
+              {usedHref ? "Explore used phones" : "See all offers"}
             </Link>
           </div>
         </div>
@@ -247,7 +247,10 @@ export function HomeHero({
   storeName,
   tagline,
   taglineBn,
+  usedHref = null,
 }: {
+  /** "Explore used phones" target when the shop has used phones in stock. */
+  usedHref?: string | null;
   spotlight: HeroSpotlight | null;
   banner: Banner | null;
   deals: ProductCard[];
@@ -261,7 +264,7 @@ export function HomeHero({
   taglineBn: string | null;
 }) {
   const main = spotlight ? (
-    <Spotlight spotlight={spotlight} imageOverride={imageOverride} />
+    <Spotlight spotlight={spotlight} imageOverride={imageOverride} usedHref={usedHref} />
   ) : banner ? (
     <BannerHero banner={banner} />
   ) : (

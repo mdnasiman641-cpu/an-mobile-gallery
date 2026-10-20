@@ -128,7 +128,7 @@ export interface CompletionRun {
 // Prompt
 // ---------------------------------------------------------------------------
 
-const SYSTEM = `You complete product listings for AN MOBILE GALLERY, a mobile phone shop in Bangladesh.
+const SYSTEM = `You complete product listings for AN MOBILE GADGETS, a mobile phone shop in Bangladesh.
 Rules you must follow:
 - Identify the EXACT device from the product name: brand, official model name, variant (RAM / storage) and device type. Words like used, pre-owned, pre own, official, intact, box are shop notes, not part of the model. Do not mix it up with similar models (Pro / Plus / Ultra / Lite / Prime, 4G vs 5G, another year) or regional versions.
 - When research notes from a web search are given, take specification values ONLY from them and give the numbers of the sources that support each value in "sources". Statuses: "VERIFIED" = stated in the notes with a source number; "CONFLICT" = sources disagree (put the values in "alternatives"); "NOT_FOUND" = not in the notes (leave "value" empty).

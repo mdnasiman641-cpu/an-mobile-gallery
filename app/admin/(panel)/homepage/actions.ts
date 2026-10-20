@@ -42,6 +42,10 @@ function migrationHint(message: string) {
   return /relation .* does not exist|homepage_sections/i.test(message) ? "Homepage settings need the latest database migration." : "Couldn't save. Please try again.";
 }
 
+/** The "collections" section row is created by migration 0019. */
+const COLLECTIONS_MIGRATION = "This section needs database migration 0019 (supabase/migrations/20261021000019_guides_and_collections.sql). Run it in the Supabase SQL editor first.";
+const noRow = (data: unknown[] | null) => !data || data.length === 0;
+
 /** Save the order (keys top → bottom). Rows that don't exist yet are created. */
 export async function saveHomepageOrderAction(keys: string[]): Promise<ActionResult> {
   const session = await assertStaff("editor");
@@ -49,9 +53,12 @@ export async function saveHomepageOrderAction(keys: string[]): Promise<ActionRes
   const parsed = z.array(keySchema).safeParse(keys);
   if (!parsed.success || new Set(parsed.data).size !== SECTION_KEYS.length) return { ok: false, message: "Invalid order." };
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("homepage_sections")
-    .upsert(parsed.data.map((key, i) => ({ key, position: i + 1, updated_by: session.userId })), { onConflict: "key" });
+  const rows = parsed.data.map((key, i) => ({ key, position: i + 1, updated_by: session.userId }));
+  let { error } = await supabase.from("homepage_sections").upsert(rows, { onConflict: "key" });
+  if (error && (error.code === "23514" || /check constraint/i.test(error.message))) {
+    // before migration 0019 the database doesn't know the "collections" section: save the rest
+    ({ error } = await supabase.from("homepage_sections").upsert(rows.filter((r) => r.key !== "collections"), { onConflict: "key" }));
+  }
   if (error) return { ok: false, message: migrationHint(error.message) };
   invalidateHomepage();
   revalidatePath("/admin/homepage");
@@ -64,8 +71,9 @@ export async function toggleHomepageSectionAction(key: string, enabled: boolean)
   const k = keySchema.safeParse(key);
   if (!k.success) return { ok: false, message: "Unknown section." };
   const supabase = await createClient();
-  const { error } = await supabase.from("homepage_sections").update({ is_enabled: Boolean(enabled), updated_by: session.userId }).eq("key", k.data);
+  const { data: updated, error } = await supabase.from("homepage_sections").update({ is_enabled: Boolean(enabled), updated_by: session.userId }).eq("key", k.data).select("key");
   if (error) return { ok: false, message: migrationHint(error.message) };
+  if (noRow(updated)) return { ok: false, message: k.data === "collections" ? COLLECTIONS_MIGRATION : "Homepage settings need the latest database migration." };
   invalidateHomepage();
   revalidatePath("/admin/homepage");
   return { ok: true, message: `${SECTION_DEFS[k.data].label} ${enabled ? "shown" : "hidden"}` };
@@ -90,7 +98,7 @@ export async function saveHomepageSectionAction(key: string, values: unknown): P
     if (v.items && v.items.length) config.items = v.items;
     else delete config.items;
   }
-  const { error } = await supabase
+  const { data: saved, error } = await supabase
     .from("homepage_sections")
     .update({
       title: def.fields.includes("title") ? v.title : null,
@@ -104,8 +112,10 @@ export async function saveHomepageSectionAction(key: string, values: unknown): P
       config,
       updated_by: session.userId,
     })
-    .eq("key", k.data);
+    .eq("key", k.data)
+    .select("key");
   if (error) return { ok: false, message: migrationHint(error.message) };
+  if (noRow(saved)) return { ok: false, message: k.data === "collections" ? COLLECTIONS_MIGRATION : "Homepage settings need the latest database migration." };
 
   // Manual picks: replace the list (prices are never changed here).
   if (def.itemType) {

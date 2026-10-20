@@ -6,8 +6,8 @@ import { CACHE_TAGS } from "@/lib/cache";
 import type { SeoSettings, SiteSettings } from "@/types";
 
 export const DEFAULT_SITE_SETTINGS: SiteSettings = {
-  store_name: "AN MOBILE GALLERY",
-  store_name_bn: "এএন মোবাইল গ্যালারি",
+  store_name: "AN MOBILE GADGETS",
+  store_name_bn: "এএন মোবাইল গ্যাজেটস",
   tagline: "Original phones, honest prices",
   tagline_bn: "আসল ফোন, সঠিক দাম",
   logo_url: null,
@@ -33,15 +33,15 @@ export const DEFAULT_SITE_SETTINGS: SiteSettings = {
 };
 
 export const DEFAULT_SEO_SETTINGS: SeoSettings = {
-  site_title: "AN MOBILE GALLERY",
+  site_title: "AN MOBILE GADGETS | New & Used Mobile Phones in Bangladesh",
   site_description:
-    "Buy original smartphones, used phones and gadgets in Bangladesh at the best price. Fast delivery and warranty support.",
+    "Shop new and used iPhones, Samsung and Android smartphones at AN MOBILE GADGETS. Explore mobile phone prices, browse available products, and contact our shop in Bangladesh.",
   default_keywords: null,
   default_og_image: null,
   google_site_verification: null,
   facebook_domain_verification: null,
   twitter_handle: null,
-  organization_name: "AN MOBILE GALLERY",
+  organization_name: "AN MOBILE GADGETS",
   organization_legal_name: null,
   organization_logo: null,
   organization_founding_year: null,

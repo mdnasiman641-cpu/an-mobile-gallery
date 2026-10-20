@@ -6,6 +6,7 @@
 import { EMI_PROMO, EXCHANGE_PROMO, STORE_AREA } from "@/lib/storefront";
 
 export const SECTION_KEYS = [
+  "collections",
   "hero",
   "deals",
   "trust",
@@ -48,6 +49,17 @@ export interface SectionDef {
 }
 
 export const SECTION_DEFS: Record<SectionKey, SectionDef> = {
+  collections: {
+    key: "collections",
+    label: "Headline & Shop by Collection",
+    itemType: null,
+    fields: ["title", "subtitle", "button"],
+    defaultTitle: "",
+    defaultSubtitle: "Real prices in Taka and live stock from {store}. Order online, or message us on WhatsApp before you buy.",
+    defaultButtonText: "Shop now",
+    autoHint:
+      "The page headline with Shop now / Explore used phones, next to cards for iPhone, Used, New, Samsung, Android and Best deals — each shown only when it has products in stock. Leave the title empty for an automatic one.",
+  },
   hero: { key: "hero", label: "Hero", itemType: "product", fields: ["image"], defaultTitle: "Hero", autoHint: "Top featured product with a photo (else the newest). Manual: pick the product.", defaultLimit: 1, maxLimit: 1 },
   deals: { key: "deals", label: "Today's Best Deals", itemType: "product", fields: ["title", "subtitle"], defaultTitle: "Today’s best deals", defaultSubtitle: "আজকের সেরা অফার", autoHint: "Discounted products; falls back to featured prices.", defaultLimit: 4, maxLimit: 6 },
   trust: { key: "trust", label: "Trust Features", itemType: null, fields: [], hasTextItems: true, defaultTitle: "Our services", autoHint: "Five short service cards under the hero." },
@@ -64,7 +76,7 @@ export const SECTION_DEFS: Record<SectionKey, SectionDef> = {
   brands: { key: "brands", label: "Popular Brands", itemType: "brand", fields: ["title", "button"], defaultTitle: "Popular brands", defaultButtonText: "All brands", autoHint: "Featured brands (else all).", defaultLimit: 12, maxLimit: 24 },
   promotions: { key: "promotions", label: "Promotional Banners", itemType: "banner", fields: [], defaultTitle: "Promotions", autoHint: "Active banners from Admin → Banners.", defaultLimit: 3, maxLimit: 3 },
   reviews: { key: "reviews", label: "Customer Reviews", itemType: null, fields: ["title"], defaultTitle: "What customers say", autoHint: "Latest approved 4★–5★ reviews (real reviews only).", defaultLimit: 6, maxLimit: 9 },
-  why: { key: "why", label: "Why AN MOBILE GALLERY", itemType: null, fields: ["title"], hasTextItems: true, defaultTitle: "Why {store}", autoHint: "Five reasons to buy from the shop." },
+  why: { key: "why", label: "Why choose us", itemType: null, fields: ["title"], hasTextItems: true, defaultTitle: "Why {store}", autoHint: "Five reasons to buy from the shop." },
   footer_promo: { key: "footer_promo", label: "Footer Promotional Content", itemType: null, fields: ["title", "subtitle", "button"], defaultTitle: "Can’t find the phone you want?", defaultSubtitle: "আপনার পছন্দের ফোনটি খুঁজে না পেলে আমাদের জানান", defaultButtonText: "Contact the shop", autoHint: "Dark band above the footer with WhatsApp and contact buttons." },
 };
 
@@ -108,7 +120,7 @@ export interface HomepageSection {
 }
 
 const DEFAULT_ORDER: SectionKey[] = [
-  "hero", "deals", "trust", "categories", "exchange", "emi", "offers", "brands", "featured",
+  "collections", "hero", "deals", "trust", "categories", "exchange", "emi", "offers", "brands", "featured",
   "promotions", "new_arrivals", "used", "refurbished", "accessories", "best_sellers", "reviews", "why", "footer_promo",
 ];
 const OFF_BY_DEFAULT = new Set<SectionKey>(["refurbished"]);

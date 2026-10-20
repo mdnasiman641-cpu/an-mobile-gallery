@@ -66,7 +66,14 @@ const SETTINGS_MONEY_PATHS = ["/cart", "/checkout"] as const;
 const PRODUCT_LIST_PATHS = ["/", "/products", "/offers", "/brands", "/categories", "/sitemap.xml", "/feeds/google-merchant.xml"] as const;
 // Every brand / category page (route pattern). The route group is listed too,
 // since the pattern Next.js matches depends on how the route is resolved.
-const PRODUCT_LIST_PATTERNS = ["/brands/[slug]", "/categories/[slug]", "/(store)/brands/[slug]", "/(store)/categories/[slug]"] as const;
+const PRODUCT_LIST_PATTERNS = [
+  "/brands/[slug]",
+  "/categories/[slug]",
+  "/collections/[slug]",
+  "/(store)/brands/[slug]",
+  "/(store)/categories/[slug]",
+  "/(store)/collections/[slug]",
+] as const;
 
 /**
  * Product created/updated/deleted, stock or price changed.

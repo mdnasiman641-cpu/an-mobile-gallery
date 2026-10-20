@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
+import Link from "next/link";
 import { ChevronDown, Clock, ExternalLink, MapPin, MessageCircle, Phone } from "lucide-react";
 import type { HeaderOutlet } from "@/lib/header-config";
 import { cn, whatsappLink } from "@/lib/utils";
@@ -117,6 +118,9 @@ export function LocationsMenu({ outlets, className }: { outlets: HeaderOutlet[];
               );
             })}
           </ul>
+          <Link href="/shop-locations" prefetch={false} onClick={() => setOpen(false)} className="mt-1 block border-t border-line px-3 pb-1.5 pt-2.5 text-sm font-semibold text-signal hover:underline">
+            All shop locations
+          </Link>
         </div>
       ) : null}
     </div>

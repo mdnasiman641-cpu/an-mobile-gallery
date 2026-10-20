@@ -26,6 +26,8 @@ import {
   type PromoLink,
 } from "@/components/store/home-sections";
 import { RatingStars } from "@/components/store/product-bits";
+import { HomeCollections } from "@/components/store/home-collections";
+import { getCollectionSummaries, type CollectionSummary } from "@/services/collections";
 import { buildMetadata } from "@/lib/seo";
 import { SECTION_DEFS, sectionLimit, sectionText, type HomepageSection, type SectionKey } from "@/lib/homepage";
 import { EMI_PROMO, EXCHANGE_PROMO } from "@/lib/storefront";
@@ -40,10 +42,17 @@ import { withSiteDefaults } from "@/lib/page-metadata";
 // Cloudflare Workers Free can exceed the 10 ms CPU limit.
 export const revalidate = 1800;
 
+/** "AN MOBILE GADGETS" alone says nothing about the shop: add what it sells. */
+function homeTitle(siteTitle: string, storeName: string): string {
+  const t = siteTitle.trim();
+  if (!t || t.toLowerCase() === storeName.trim().toLowerCase()) return `${storeName || t} | New & Used Mobile Phones in Bangladesh`;
+  return t;
+}
+
 export async function generateMetadata(): Promise<Metadata> {
-  const seo = await getSeoSettings();
+  const [seo, site] = await Promise.all([getSeoSettings(), getSiteSettings()]);
   return withSiteDefaults(buildMetadata({
-    title: seo.site_title,
+    title: homeTitle(seo.site_title, site.store_name),
     description: seo.site_description,
     path: "/",
     image: seo.default_og_image,
@@ -97,6 +106,11 @@ export default async function HomePage() {
   const products = (key: string, q: ProductQuery) => once(key, () => queryProducts({ perPage: 12, ...q }).then((r) => r.items));
   const categories = () => once("categories", getCategories);
   const banners = () => once("banners", () => Promise.all([getBanners("hero"), getBanners("promo")]));
+  const collections = () =>
+    once("collections", async () => {
+      const [cats, brands] = await Promise.all([categories(), once("brands", getBrands)]);
+      return getCollectionSummaries(cats, brands);
+    });
 
   // All manually picked products, one request.
   const manualIds = Array.from(
@@ -182,6 +196,7 @@ export default async function HomePage() {
           return [s.key, list] as const;
         }
         if (s.key === "reviews") return [s.key, await getRecentReviews(sectionLimit(s))] as const;
+        if (s.key === "collections") return [s.key, await collections()] as const;
         if (s.key === "accessories") return [s.key, await sectionProducts(s)] as const;
         return [s.key, null] as const;
       }),
@@ -196,6 +211,9 @@ export default async function HomePage() {
   const text = (s: HomepageSection) => sectionText(s, settings.store_name);
   const updatedAt = nowLabel();
   const accessoriesCategory = enabled.has("accessories") ? findAccessories(await categories()) : undefined;
+  const collectionCards = enabled.has("collections") || enabled.has("hero") ? await collections() : [];
+  const hasCollection = (k: CollectionSummary["key"]) => collectionCards.some((c) => c.key === k);
+  const usedHref = hasCollection("used") ? "/collections/used-phones" : null;
 
   // Hero + Deals and Exchange + EMI sit side by side when they are next to each other.
   const order = sections.map((s) => s.key);
@@ -225,6 +243,28 @@ export default async function HomePage() {
   const render = (s: HomepageSection): React.ReactNode => {
     const t = text(s);
     switch (s.key) {
+      case "collections": {
+        // automatic headline: only claims what the catalog really has
+        const auto =
+          hasCollection("new") && hasCollection("used")
+            ? "New & used mobile phones in Bangladesh"
+            : hasCollection("used")
+              ? "Used mobile phones in Bangladesh"
+              : hasCollection("new")
+                ? "New mobile phones in Bangladesh"
+                : "Mobile phones in Bangladesh";
+        return (
+          <HomeCollections
+            key="collections"
+            heading={s.title?.trim() || auto}
+            text={t.subtitle}
+            primary={{ label: t.buttonText || "Shop now", href: t.buttonUrl || "/products" }}
+            secondary={usedHref ? { label: "Explore used phones", href: usedHref } : null}
+            collections={collectionCards}
+            storeName={settings.store_name}
+          />
+        );
+      }
       case "hero": {
         const deals = heroWithDeals && dealsSection ? dealsData.list : [];
         return (
@@ -241,6 +281,7 @@ export default async function HomePage() {
               storeName={settings.store_name}
               tagline={settings.tagline}
               taglineBn={settings.tagline_bn}
+              usedHref={usedHref}
             />
           </div>
         );
@@ -359,9 +400,11 @@ export default async function HomePage() {
 
   return (
     <>
-      <h1 className="sr-only">
-        {settings.store_name} — {settings.tagline}
-      </h1>
+      {enabled.has("collections") ? null : (
+        <h1 className="sr-only">
+          {settings.store_name}: {settings.tagline?.trim() || "mobile phones in Bangladesh"}
+        </h1>
+      )}
       {sections.map(render)}
     </>
   );

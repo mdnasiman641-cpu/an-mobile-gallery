@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import { Clock, Mail, MapPin, MessageCircle, Phone } from "lucide-react";
 import { getSiteSettings } from "@/services/settings";
@@ -78,6 +79,9 @@ export default async function ContactPage() {
                   Open in Google Maps
                 </a>
               ) : null}
+              <Link href="/shop-locations" className="mt-1 block text-sm font-semibold text-signal underline">
+                All shop locations
+              </Link>
             </div>
           </li>
         ) : null}

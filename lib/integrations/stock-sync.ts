@@ -4,7 +4,7 @@ import { conditionFromName } from "@/lib/utils";
 
 /**
  * One-way stock import from the shop's stock system (Lovable) into
- * AN MOBILE GALLERY. The stock system only provides basic stock facts; it
+ * AN MOBILE GADGETS. The stock system only provides basic stock facts; it
  * never controls prices, images, content, SEO or publishing here, and the
  * website never calls it while serving customers.
  *

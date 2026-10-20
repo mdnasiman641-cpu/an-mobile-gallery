@@ -127,7 +127,7 @@ export async function verifyMeta(
       event_id: `verify.${crypto.randomUUID()}`,
       action_source: "website",
       event_source_url: ctx.siteUrl,
-      user_data: { client_user_agent: "AN MOBILE GALLERY tracking verification" },
+      user_data: { client_user_agent: "AN MOBILE GADGETS tracking verification" },
     };
     const sent = await sendMetaEvents({ ...dest }, [ev], fetchImpl);
     if (sent.ok) return { ok: true, method: "test_event", message: `Test event accepted by Meta (${sent.summary}). Check Events Manager → Test events for code ${dest.testEventCode}. ${readOk ? readMessage : ""}`.trim() };

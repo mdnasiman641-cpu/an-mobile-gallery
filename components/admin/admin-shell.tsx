@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
+import { BookOpen,
   BadgePercent,
   Bot,
   Boxes,
@@ -45,6 +45,7 @@ const NAV: { href: string; label: string; Icon: typeof Package; min: StaffRole }
   { href: "/admin/coupons", label: "Coupons", Icon: BadgePercent, min: "admin" },
   { href: "/admin/banners", label: "Banners", Icon: ImageIcon, min: "editor" },
   { href: "/admin/pages", label: "Pages", Icon: FileText, min: "editor" },
+  { href: "/admin/guides", label: "Guides", Icon: BookOpen, min: "editor" },
   { href: "/admin/seo", label: "SEO", Icon: Search, min: "admin" },
   { href: "/admin/settings", label: "Settings", Icon: Settings, min: "admin" },
   { href: "/admin/settings/ai", label: "AI settings", Icon: Bot, min: "admin" },

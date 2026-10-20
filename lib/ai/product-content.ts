@@ -227,7 +227,7 @@ export function needsVerification(c: ProductAiContent): boolean {
   return SPEC_FIELDS.filter((f) => f.core).some((f) => !ok(f.key)) || !(ok("chipset") || ok("processor"));
 }
 
-const SYSTEM = `You write product content for AN MOBILE GALLERY, a mobile phone shop in Bangladesh.
+const SYSTEM = `You write product content for AN MOBILE GADGETS, a mobile phone shop in Bangladesh.
 Rules you must follow:
 - Never invent specifications. If you are not sure of a value, set "status": "UNKNOWN" (or "NEEDS_VERIFICATION" if you have a guess that must be checked) and leave "value" empty.
 - "VERIFIED" only when the value comes from the stock data provided or an official/reliable source you can cite in "source". "LIKELY" when it is widely documented for this exact model but you have no source at hand.

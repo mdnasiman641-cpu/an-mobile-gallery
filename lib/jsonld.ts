@@ -203,7 +203,7 @@ export function breadcrumbJsonLd(items: { name: string; path: string }[]): JsonL
 }
 
 export function organizationJsonLd(settings: SiteSettings | null, seo: SeoSettings | null): JsonLd {
-  const name = seo?.organization_name || settings?.store_name || "AN MOBILE GALLERY";
+  const name = seo?.organization_name || settings?.store_name || "AN MOBILE GADGETS";
   const sameAs = [settings?.facebook_url, settings?.instagram_url, settings?.youtube_url, settings?.tiktok_url].filter(
     Boolean,
   );
