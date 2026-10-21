@@ -7,7 +7,8 @@ import { ArrowDown, ArrowUp, Copy, ExternalLink, ImagePlus, Plus, Star, Trash2 }
 import { toast } from "sonner";
 import { saveProductAction, duplicateProductAction, deleteProductAction } from "@/app/admin/(panel)/products/actions";
 import { cancelProductAiAction, completeProductWithAiAction } from "@/app/admin/(panel)/products/ai-actions";
-import { AiTag, ProductAiPanel, type ReviewItem } from "@/components/admin/product-ai-panel";
+import { AiTag, ProductAiPanel, type AiPhase, type ReviewItem } from "@/components/admin/product-ai-panel";
+import { AiAssistant, ImproveContentButton, type AssistantProps } from "@/components/admin/ai-assistant";
 import { SpecEditor } from "@/components/admin/spec-editor";
 import {
   AI_FIELDS,
@@ -30,6 +31,7 @@ import {
   suggestSku,
   unappliedFields,
   withQuickSpec,
+  withoutEditsDuringRun,
   type AiField,
   type AiFormValues,
   type CompletionRun,
@@ -46,6 +48,9 @@ import { slugify } from "@/lib/slug";
 import { cn, conditionFromName, conditionLabel, discountPercent, formatPrice, isSvg } from "@/lib/utils";
 import type { BoxValue, ProductFormValues, VariantRow } from "@/lib/product-form-values";
 import type { Brand, Category, ProductCondition, ProductStatus } from "@/types";
+
+/** The browser stops waiting after this; the server request has its own, shorter per-model limits. */
+const AI_CLIENT_TIMEOUT_MS = 150_000;
 
 const TABS = ["Basic information", "Pricing", "Inventory", "Images", "Variants", "Specifications", "Description", "SEO"] as const;
 type Tab = (typeof TABS)[number];
@@ -85,6 +90,8 @@ export function ProductForm({
   aiCompletion = null,
   aiSetupMessage = null,
   canManageAi = false,
+  assistant = null,
+  aiTimeoutMs = AI_CLIENT_TIMEOUT_MS,
 }: {
   initial: ProductFormValues;
   brands: Pick<Brand, "id" | "name">[];
@@ -96,6 +103,10 @@ export function ProductForm({
   /** Why Complete with AI can't run (migration missing / no models), or null. */
   aiSetupMessage?: string | null;
   canManageAi?: boolean;
+  /** Saved product's AI status (edit page): shown inside the AI Product Assistant. */
+  assistant?: AssistantProps | null;
+  /** How long the browser waits for the AI (default AI_CLIENT_TIMEOUT_MS; shorter in tests). */
+  aiTimeoutMs?: number;
 }) {
   const router = useRouter();
   const [v, setV] = useState<ProductFormValues>(initial);
@@ -111,13 +122,18 @@ export function ProductForm({
   // ---------------------------------------------------------------- AI
   const [ai, setAi] = useState<AiFormValues>(() => (aiCompletion ? completionToForm(aiCompletion.completion) : {}));
   const [run, setRun] = useState<CompletionRun | null>(aiCompletion);
-  const [aiBusy, setAiBusy] = useState(false);
+  // request lifecycle: idle → submitting (saving the draft) → generating → completed | failed | cancelled | timed_out
+  const [aiPhase, setAiPhase] = useState<AiPhase>("idle");
+  const aiBusy = aiPhase === "submitting" || aiPhase === "generating";
   const [busySections, setBusySections] = useState<CompletionSection[]>([]);
   const [justCompleted, setJustCompleted] = useState(false);
   const [aiError, setAiError] = useState<{ message: string; details: string[]; draftSaved: boolean } | null>(null);
   const [confirm, setConfirm] = useState<{ proposed: AiFormValues; conflicts: string[] } | null>(null);
   const [lastApply, setLastApply] = useState<{ applied: string[]; kept: string[] } | null>(null);
   const busyRef = useRef(false);
+  // what the last request asked for (Retry repeats exactly that)
+  const lastRequestRef = useRef<{ sections: CompletionSection[]; mode: "fill" | "missing"; forceResearch: boolean } | null>(null);
+  const aiStartedAtRef = useRef<string | null>(null);
   // the run whose answer may still be applied; Cancel moves it on so a late answer is ignored
   const runIdRef = useRef(0);
   const aiProductRef = useRef<string | null>(null);
@@ -365,7 +381,10 @@ export function ProductForm({
     }
     busyRef.current = true;
     const runId = ++runIdRef.current;
-    setAiBusy(true);
+    lastRequestRef.current = { sections, mode, forceResearch };
+    // the form as it was when the request started: fields edited meanwhile are never replaced
+    const before = formContent(cur);
+    setAiPhase("submitting");
     setBusySections(sections);
     setAiError(null);
     setJustCompleted(false);
@@ -373,9 +392,14 @@ export function ProductForm({
     let draftId: string | null = null;
     try {
       draftId = await ensureDraft();
-      if (!draftId || runId !== runIdRef.current) return;
+      if (!draftId || runId !== runIdRef.current) {
+        if (runId === runIdRef.current) setAiPhase("failed");
+        return;
+      }
       aiProductRef.current = draftId;
-      const res = await completeProductWithAiAction({
+      aiStartedAtRef.current = new Date().toISOString();
+      setAiPhase("generating");
+      const request = completeProductWithAiAction({
         productId: draftId,
         name: cur.name,
         ram: quickSpec(cur.specs, "ram"),
@@ -392,8 +416,27 @@ export function ProductForm({
           .map((r) => ({ name: r.name.trim().slice(0, 80), value: r.value.trim().slice(0, 500) })),
         forceResearch,
       });
-      if (runId !== runIdRef.current) return; // cancelled: the form stays as it is
+      // stop waiting after aiTimeoutMs; the server may still finish, its answer is then ignored
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<"timeout">((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), aiTimeoutMs);
+      });
+      const res = await Promise.race([request, timedOut]).finally(() => clearTimeout(timer));
+      if (runId !== runIdRef.current) return; // cancelled / superseded: the form stays as it is
+      if (res === "timeout") {
+        runIdRef.current += 1; // a late answer is ignored
+        busyRef.current = false;
+        setBusySections([]);
+        setAiPhase("timed_out");
+        setAiError({
+          message: `AI did not finish within ${Math.round(aiTimeoutMs / 1000)} seconds. Nothing in the form was changed. The request may still finish on the server; Retry works once it is done (at the latest after 5 minutes).`,
+          details: [],
+          draftSaved: true,
+        });
+        return;
+      }
       if (!res.ok || !res.data) {
+        setAiPhase("failed");
         setAiError({ message: res.message ?? "All configured AI models are currently unavailable.", details: res.attempts ?? [], draftSaved: true });
         return;
       }
@@ -401,21 +444,32 @@ export function ProductForm({
       const partial = sections.length < COMPLETION_SECTIONS.length;
       setRun((prev) => (prev && partial ? { ...data, research: data.research ?? prev.research ?? null, completion: mergeSections(prev.completion, data.completion) } : data));
       setJustCompleted(true);
-      const proposed = pickSections(completionToForm(data.completion), sections);
-      if (mode === "missing") applyAi(onlyEmptyFields(formContent(vRef.current), proposed), false);
-      else offerAi(proposed);
+      // never replace what the admin typed while the request was running
+      const guarded = withoutEditsDuringRun(before, formContent(vRef.current), pickSections(completionToForm(data.completion), sections));
+      if (mode === "missing") applyAi(onlyEmptyFields(formContent(vRef.current), guarded.proposed), false);
+      else offerAi(guarded.proposed);
+      setAiPhase("completed");
+      if (guarded.skipped.length) toast(`Kept what you typed while AI was working: ${guarded.skipped.join(", ")}.`);
       // the field list says exactly what was filled and what wasn't
       if (data.check && data.check.status !== "success") toast.warning(res.message ?? "Partly completed. Check the field status.");
       else toast.success("AI completed the product information. Please review before saving.");
     } catch {
-      if (runId === runIdRef.current) setAiError({ message: "The AI request failed. Please try again.", details: [], draftSaved: Boolean(draftId) });
+      if (runId === runIdRef.current) {
+        setAiPhase("failed");
+        setAiError({ message: "The AI request failed (connection problem). Nothing in the form was changed. Please try again.", details: [], draftSaved: Boolean(draftId) });
+      }
     } finally {
+      // only the newest request may end the busy state (an older one never clears a newer one)
       if (runId === runIdRef.current) {
         busyRef.current = false;
-        setAiBusy(false);
         setBusySections([]);
       }
     }
+  }
+
+  function retryAi() {
+    const last = lastRequestRef.current;
+    if (last) void completeWithAi(last.sections, last.mode, last.forceResearch);
   }
 
   /** Stop waiting for the AI: nothing in the form changes; a late answer is ignored. */
@@ -423,10 +477,11 @@ export function ProductForm({
     if (!busyRef.current) return;
     runIdRef.current += 1;
     busyRef.current = false;
-    setAiBusy(false);
+    setAiPhase("cancelled");
     setBusySections([]);
     const id = aiProductRef.current;
-    if (id) void cancelProductAiAction(id);
+    // releases only this admin's own request that started at that time
+    if (id) void cancelProductAiAction(id, aiStartedAtRef.current ?? undefined);
     toast("AI request cancelled. Nothing in the form was changed.");
   }
 
@@ -495,6 +550,12 @@ export function ProductForm({
         setupMessage={aiSetupMessage}
         canManageAi={canManageAi}
         busy={aiBusy}
+        phase={aiPhase}
+        onRetry={retryAi}
+        savedStatus={assistant ? <AiAssistant {...assistant} /> : null}
+        moreActions={
+          assistant ? <ImproveContentButton productId={assistant.productId} fields={assistant.fields} extras={assistant.extras} generatedAt={assistant.generatedAt} disabled={aiBusy} /> : null
+        }
         disabled={saving || uploading > 0}
         onComplete={(sections, research) => void completeWithAi(sections, "fill", Boolean(research))}
         onCancel={cancelAi}

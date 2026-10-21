@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, ChevronDown, Eraser, RefreshCw, Search, ShieldCheck, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/form";
@@ -16,6 +16,9 @@ import {
   type FieldState,
 } from "@/lib/ai/product-completion";
 import type { Verification } from "@/lib/ai/product-content";
+
+/** Request lifecycle of the AI Product Assistant. */
+export type AiPhase = "idle" | "submitting" | "generating" | "completed" | "failed" | "cancelled" | "timed_out";
 
 export interface ReviewItem {
   label: string;
@@ -45,6 +48,13 @@ export interface AiPanelProps {
   onComplete: (sections: CompletionSection[], research?: boolean) => void;
   /** Stop waiting for a running request (the form is not changed). */
   onCancel: () => void;
+  phase: AiPhase;
+  /** Repeat the last request (after failed / timed out / cancelled). */
+  onRetry: () => void;
+  /** Saved product's AI status (edit page only). */
+  savedStatus?: ReactNode;
+  /** Extra actions for More options (edit page: Improve existing content). */
+  moreActions?: ReactNode;
   run: CompletionRun | null;
   justCompleted: boolean;
   error: { message: string; details: string[]; draftSaved: boolean } | null;
@@ -70,6 +80,16 @@ export interface AiPanelProps {
   missing: CompletionSection[];
   onGenerateMissing: () => void;
 }
+
+const PHASE_BADGE: Record<AiPhase, { tone: "signal" | "warn" | "deal" | "neutral"; text: string }> = {
+  idle: { tone: "neutral", text: "Ready to generate" },
+  submitting: { tone: "neutral", text: "Starting…" },
+  generating: { tone: "neutral", text: "Generating…" },
+  completed: { tone: "signal", text: "Generation completed" },
+  failed: { tone: "deal", text: "Generation failed" },
+  cancelled: { tone: "neutral", text: "Cancelled" },
+  timed_out: { tone: "warn", text: "Did not finish in time" },
+};
 
 const STATE_BADGE: Record<FieldState, { tone: "signal" | "warn" | "deal" | "neutral"; text: string }> = {
   pending: { tone: "neutral", text: "Pending" },
@@ -116,8 +136,8 @@ export function ProductAiPanel(p: AiPanelProps) {
             <Sparkles className="h-5 w-5 text-signal" aria-hidden /> AI Product Assistant
           </h2>
           <p className="text-sm text-ink-soft">
-            1 · Enter these four. 2 · Click <strong>Generate all</strong>. 3 · Review the filled-in fields and save as a draft. AI never changes these four, prices, photos,
-            stock or status, and never publishes.
+            Enter the product name, price, RAM and storage. Generate the missing content, review it, and save. AI never changes these four, photos, stock or status, and never
+            publishes.
           </p>
         </div>
       </div>
@@ -164,19 +184,33 @@ export function ProductAiPanel(p: AiPanelProps) {
           </Button>
         ) : null}
       </div>
-      <p className="mt-2 text-xs text-ink-mute" aria-live="polite">
-        {p.busy
-          ? p.busySections.length > 1
-            ? `Writing ${p.busySections.map((s) => SECTION_LABELS[s]).join(", ")} in one request… You can keep editing other fields or cancel.`
-            : p.busySections.some((s) => s === "basic" || s === "specs")
-              ? "Checking the specifications… You can cancel."
-              : "AI is writing… You can cancel."
-          : ran && p.run
-            ? `Last AI run ${relativeTime(p.run.createdAt)} · ${p.run.usedModel}`
-            : p.missing.length
-              ? `Generate all fills: ${p.missing.map((m) => SECTION_LABELS[m]).join(", ")} — only empty fields, nothing you entered is replaced.`
-              : null}
-      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" aria-live="polite" role="status" data-phase={p.phase}>
+        <Badge tone={PHASE_BADGE[p.phase].tone}>{PHASE_BADGE[p.phase].text}</Badge>
+        <span className="text-ink-mute">
+          {p.phase === "submitting"
+            ? "Saving the draft…"
+            : p.phase === "generating"
+              ? p.busySections.length > 1
+                ? `Generating product content (${p.busySections.map((s) => SECTION_LABELS[s]).join(", ")}) in one request… You can keep editing; your edits are kept.`
+                : `Generating ${p.busySections.map((s) => SECTION_LABELS[s]).join(", ")}… You can keep editing; your edits are kept.`
+              : p.phase === "idle"
+                ? p.missing.length
+                  ? `Generate all fills: ${p.missing.map((m) => SECTION_LABELS[m]).join(", ")} — only empty fields.`
+                  : ran && p.run
+                    ? `Last AI run ${relativeTime(p.run.createdAt)} · ${p.run.usedModel}`
+                    : "Every part is filled."
+                : p.phase === "completed"
+                  ? "Review the filled-in fields, then Save changes."
+                  : p.phase === "cancelled"
+                    ? "Cancelled. Nothing in the form was changed."
+                    : null}
+        </span>
+        {(p.phase === "failed" || p.phase === "timed_out" || p.phase === "cancelled") && !p.busy ? (
+          <Button type="button" size="sm" variant="outline" disabled={blocked} onClick={p.onRetry}>
+            <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Retry
+          </Button>
+        ) : null}
+      </div>
 
       <details className="mt-3 rounded-lg bg-paper p-3 [&[open]>summary_svg]:rotate-180">
         <summary className="flex cursor-pointer list-none items-center gap-1 text-sm font-semibold">
@@ -192,6 +226,7 @@ export function ProductAiPanel(p: AiPanelProps) {
             <Button type="button" size="sm" variant="outline" disabled={blocked} onClick={() => p.onComplete([...COMPLETION_SECTIONS])}>
               <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Regenerate all parts
             </Button>
+            {p.moreActions}
           </div>
           <fieldset className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <legend className="sr-only">Regenerate selected parts</legend>
@@ -217,6 +252,8 @@ export function ProductAiPanel(p: AiPanelProps) {
           </p>
         </div>
       </details>
+
+      {p.savedStatus}
 
       {p.setupMessage ? (
         <p className="mt-3 rounded-lg bg-warn-tint p-3 text-sm">

@@ -979,3 +979,32 @@ export function missingSections(current: FormContent, faqCount: number): Complet
   if (faqCount < 3) out.push("faq");
   return out;
 }
+
+/**
+ * Drops from an AI result every field the admin changed WHILE the request was running
+ * (`before` = the form when the request started). A late answer never replaces those edits.
+ * Specification rows are compared one by one (by name).
+ */
+export function withoutEditsDuringRun(before: FormContent, now: FormContent, proposed: AiFormValues): { proposed: AiFormValues; skipped: string[] } {
+  const out: AiFormValues = {};
+  const skipped: string[] = [];
+  for (const f of AI_FIELDS) {
+    const value = proposed[f];
+    if (value === undefined) continue;
+    if (f === "specs") {
+      const changed = new Set(
+        now.specs
+          .filter((r) => {
+            const was = before.specs.find((b) => specKey(b.name) === specKey(r.name));
+            return !was || norm(was.value) !== norm(r.value);
+          })
+          .map((r) => specKey(r.name)),
+      );
+      const keep = (value as SpecRow[]).filter((p) => !changed.has(specKey(p.name)));
+      if (keep.length < (value as SpecRow[]).length) skipped.push(FIELD_LABELS.specs);
+      if (keep.length) out.specs = keep;
+    } else if (JSON.stringify(now[f]) !== JSON.stringify(before[f])) skipped.push(FIELD_LABELS[f]);
+    else (out as Record<string, unknown>)[f] = value;
+  }
+  return { proposed: out, skipped };
+}

@@ -9,7 +9,7 @@ import { ProductForm } from "@/components/admin/product-form";
 import { boxValue, type ProductFormValues } from "@/lib/product-form-values";
 import { Badge } from "@/components/ui/misc";
 import { statusLabel } from "@/lib/utils";
-import { AiAssistant, type AssistantProps } from "@/components/admin/ai-assistant";
+import type { AssistantProps } from "@/components/admin/ai-assistant";
 import { SPEC_FIELDS, fieldSource, type Applied, type ProductAiContent, type ProductSnapshot, type TrackedField } from "@/lib/ai/product-content";
 import { aiFormSetup } from "@/lib/ai/form-setup";
 import type { Product, ProductFeature, ProductImage, ProductSpecification, ProductVariant } from "@/types";
@@ -210,7 +210,6 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
           </>
         }
       />
-      {aiTablesReady ? <AiAssistant {...assistant} /> : null}
       <ProductForm
         key={p.updated_at}
         initial={initial}
@@ -221,6 +220,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
         aiCompletion={aiForm.completion}
         aiSetupMessage={aiForm.setupMessage}
         canManageAi={canSeeCost}
+        assistant={aiTablesReady ? assistant : null}
       />
     </>
   );

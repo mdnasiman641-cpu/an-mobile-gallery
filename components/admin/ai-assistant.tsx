@@ -25,11 +25,6 @@ export interface AssistantProps {
   external: { source: string; id: string; syncedAt: string; status: string; error: string | null; quantity: number | null; removed: boolean } | null;
 }
 
-// Generating, verifying, SEO, description and FAQ live in the AI Product Assistant at the top of the
-// form (one workflow). This section shows what AI produced and keeps the one action that only
-// exists here: improving the saved content in place.
-const TASKS: { task: ContentTask; label: string }[] = [{ task: "improve", label: "Improve existing content" }];
-
 const STATUS_TEXT: Record<NonNullable<AssistantProps["reviewStatus"]>, string> = {
   pending: "Pending",
   processing: "Processing",
@@ -47,65 +42,29 @@ const VERIFY_ICON: Record<Verification, { Icon: typeof CheckCircle2; cls: string
   USER_PROVIDED: { Icon: CheckCircle2, cls: "text-signal", text: "entered by you" },
 };
 
+/**
+ * The saved product's AI status (fields, specification checks, sources, FAQ / keywords / tags,
+ * last job). Shown INSIDE the AI Product Assistant (one AI section on the page); its actions live
+ * in the assistant: generating there, "Improve existing content" under More options.
+ */
 export function AiAssistant(props: AssistantProps) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
-  const [running, setRunning] = useState<ContentTask | null>(null);
-  const [confirm, setConfirm] = useState<{ task: ContentTask; fields: string[] } | null>(null);
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const generated = Boolean(props.generatedAt);
-
-  function manualFor(task: ContentTask): string[] {
-    const list = props.fields.filter((f) => TASK_FIELDS[task].includes(f.key) && f.source === "manual").map((f) => f.label);
-    if ((task === "faq" || task === "full") && props.extras.manual) list.push("FAQ / keywords / tags");
-    return list;
-  }
-
-  function request(task: ContentTask) {
-    const manual = manualFor(task);
-    if (manual.length) {
-      setConfirm({ task, fields: manual });
-      dialogRef.current?.showModal();
-    } else run(task, false);
-  }
-
-  function run(task: ContentTask, replace: boolean) {
-    dialogRef.current?.close();
-    setRunning(task);
-    start(async () => {
-      toastResult(await runAiTaskAction(props.productId, task, replace));
-      setRunning(null);
-      router.refresh();
-    });
-  }
-
+  const counts = { ai: props.fields.filter((f) => f.source === "ai").length, manual: props.fields.filter((f) => f.source === "manual").length, empty: props.fields.filter((f) => f.source === "empty").length };
   return (
-    <section aria-labelledby="ai-assistant" className="mb-6 rounded-[var(--radius-card)] border border-brand/30 bg-[linear-gradient(180deg,#f2fbf8,#ffffff)] p-4 sm:p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 id="ai-assistant" className="flex items-center gap-2 text-lg font-bold">
-            <Sparkles className="h-5 w-5 text-brand" aria-hidden /> AI review &amp; sources
-          </h2>
-          <p className="text-sm text-ink-soft">
-            {props.reviewStatus ? <Badge tone={props.reviewStatus === "ready" ? "signal" : props.reviewStatus === "failed" ? "deal" : props.reviewStatus === "needs_verification" ? "warn" : "neutral"}>{STATUS_TEXT[props.reviewStatus]}</Badge> : null}{" "}
-            {generated ? `Generated ${new Date(props.generatedAt!).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}${props.model ? ` with ${props.model}` : ""}` : "No AI content yet."}
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {TASKS.map((t) => (
-          <Button key={t.task} variant="outline" size="sm" onClick={() => request(t.task)} loading={running === t.task} disabled={pending || (!generated && t.task === "improve" && props.fields.every((f) => f.source === "empty"))}>
-            {t.label}
-          </Button>
-        ))}
-      </div>
-      <p className="mt-2 text-xs text-ink-mute">
-        To generate or regenerate content, use the AI Product Assistant at the top of the form. “Improve existing content” rewrites the saved text in place: save any
-        unsaved changes first; the form reloads with the result. AI never sets prices, discounts, EMI, images or stock and never publishes.
-      </p>
-
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+    <details className="mt-4 rounded-lg border border-line bg-surface p-3">
+      <summary className="flex cursor-pointer flex-wrap items-center gap-2 text-sm">
+        <span id="ai-assistant" className="font-semibold">
+          Saved content status
+        </span>
+        {props.reviewStatus ? (
+          <Badge tone={props.reviewStatus === "ready" ? "signal" : props.reviewStatus === "failed" ? "deal" : props.reviewStatus === "needs_verification" ? "warn" : "neutral"}>{STATUS_TEXT[props.reviewStatus]}</Badge>
+        ) : null}
+        <span className="text-ink-soft">
+          {counts.ai} AI · {counts.manual} edited by you · {counts.empty} empty
+          {generated ? ` · generated ${new Date(props.generatedAt!).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}${props.model ? ` with ${props.model}` : ""}` : ""}
+        </span>
+      </summary>
+      <div className="mt-3 grid gap-4 lg:grid-cols-3">
         <div>
           <h3 className="text-sm font-semibold">Fields</h3>
           <ul className="mt-2 space-y-1 text-sm">
@@ -206,27 +165,64 @@ export function AiAssistant(props: AssistantProps) {
       </div>
 
       <ExtrasEditor productId={props.productId} initial={props.extras} />
+    </details>
+  );
+}
 
+/** "Improve existing content" (rewrites the SAVED text in place; asks before replacing your edits). */
+export function ImproveContentButton(props: Pick<AssistantProps, "productId" | "fields" | "extras" | "generatedAt"> & { disabled?: boolean }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [confirm, setConfirm] = useState<string[] | null>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const task: ContentTask = "improve";
+  const manual = props.fields.filter((f) => TASK_FIELDS[task].includes(f.key) && f.source === "manual").map((f) => f.label);
+  const nothing = !props.generatedAt && props.fields.every((f) => f.source === "empty");
+  function run(replace: boolean) {
+    dialogRef.current?.close();
+    start(async () => {
+      toastResult(await runAiTaskAction(props.productId, task, replace));
+      router.refresh();
+    });
+  }
+  return (
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        loading={pending}
+        disabled={props.disabled || pending || nothing}
+        title="Rewrites the saved text in place. Save your changes first; the page reloads with the result."
+        onClick={() => {
+          if (manual.length) {
+            setConfirm(manual);
+            dialogRef.current?.showModal();
+          } else run(false);
+        }}
+      >
+        <Sparkles className="h-3.5 w-3.5" aria-hidden /> Improve existing content
+      </Button>
       <dialog ref={dialogRef} className="m-auto w-[min(92vw,460px)] rounded-[var(--radius-card)] border border-line bg-surface p-0 text-ink backdrop:bg-ink/40" aria-labelledby="ai-confirm-title">
         <div className="p-5">
           <h2 id="ai-confirm-title" className="text-lg font-bold">
-            Regenerate and replace my edits?
+            Improve and replace my edits?
           </h2>
-          <p className="mt-1.5 text-sm text-ink-soft">You edited these by hand: {confirm?.fields.join(", ")}.</p>
+          <p className="mt-1.5 text-sm text-ink-soft">You edited these by hand: {confirm?.join(", ")}.</p>
           <div className="mt-5 flex flex-wrap justify-end gap-2">
-            <Button variant="ghost" onClick={() => dialogRef.current?.close()}>
+            <Button type="button" variant="ghost" onClick={() => dialogRef.current?.close()}>
               Cancel
             </Button>
-            <Button variant="outline" onClick={() => confirm && run(confirm.task, false)}>
+            <Button type="button" variant="outline" onClick={() => run(false)}>
               Keep my edits
             </Button>
-            <Button variant="danger" onClick={() => confirm && run(confirm.task, true)}>
+            <Button type="button" variant="danger" onClick={() => run(true)}>
               Replace my edits
             </Button>
           </div>
         </div>
       </dialog>
-    </section>
+    </>
   );
 }
 

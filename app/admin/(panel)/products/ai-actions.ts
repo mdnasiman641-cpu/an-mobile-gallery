@@ -58,7 +58,7 @@ const inputSchema = z.object({
 });
 
 
-export async function completeProductWithAiAction(raw: unknown): Promise<ActionResult<CompletionRun> & { attempts?: string[] }> {
+export async function completeProductWithAiAction(raw: unknown): Promise<ActionResult<CompletionRun> & { attempts?: string[]; code?: "BUSY" }> {
   const session = await assertStaff("editor");
   if ("error" in session) return { ok: false, message: session.error };
   const parsed = inputSchema.safeParse(raw);
@@ -92,12 +92,22 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
   const brands = (brandsRes.data as { id: string; name: string }[]) ?? [];
   const categories = (categoriesRes.data as { id: string; name: string }[]) ?? [];
 
-  // One run per product at a time (database-enforced). A run that died mid-way is released after 5 minutes.
+  // One AI job per product at a time (database: ai_jobs_one_active_per_product covers 'pending' AND
+  // 'processing' jobs of every type). Before starting, release what is not really running:
+  //   * a job that is only QUEUED ('pending', e.g. created by a stock import and never processed) is
+  //     replaced by this request from the product editor — nothing is working on it;
+  //   * a job 'processing' for longer than 5 minutes died (a request can't run that long here).
+  // A job that started less than 5 minutes ago is genuinely running and is left alone.
+  const nowIso = new Date().toISOString();
   await supabase
     .from("ai_jobs")
-    .update({ status: "failed", completed_at: new Date().toISOString(), error_code: "STALE", error_message: "Did not finish." })
+    .update({ status: "failed", completed_at: nowIso, error_code: "SUPERSEDED", error_message: "Replaced by an AI request from the product editor before it started." })
     .eq("product_id", input.productId)
-    .eq("task_type", "complete")
+    .eq("status", "pending");
+  await supabase
+    .from("ai_jobs")
+    .update({ status: "failed", completed_at: nowIso, error_code: "STALE", error_message: "Did not finish." })
+    .eq("product_id", input.productId)
     .eq("status", "processing")
     .lt("started_at", new Date(Date.now() - STALE_MS).toISOString());
   const { data: jobRow, error: jobError } = await supabase
@@ -106,7 +116,23 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
     .select("id")
     .single();
   if (jobError || !jobRow) {
-    if (jobError?.code === "23505") return { ok: false, message: "AI is already working on this product. Please wait for it to finish." };
+    if (jobError?.code === "23505") {
+      // what is running, since when, and when it is released at the latest
+      const { data: running } = await supabase
+        .from("ai_jobs")
+        .select("task_type, started_at")
+        .eq("product_id", input.productId)
+        .eq("status", "processing")
+        .maybeSingle();
+      const r = running as { task_type: string; started_at: string | null } | null;
+      const since = r?.started_at ? Math.max(0, Math.round((Date.now() - Date.parse(r.started_at)) / 1000)) : null;
+      const releaseIn = since !== null ? Math.max(1, Math.ceil((STALE_MS / 1000 - since) / 60)) : 5;
+      return {
+        ok: false,
+        code: "BUSY",
+        message: `Another AI request for this product is still running${since !== null ? ` (started ${since < 60 ? `${since} s` : `${Math.round(since / 60)} min`} ago)` : ""}. Wait for it, or try again in ${releaseIn} min — an unfinished request is released automatically after 5 minutes.`,
+      };
+    }
     return { ok: false, message: /ai_jobs|task_type|check constraint/i.test(jobError?.message ?? "") ? "Run the latest database migration (0012) to use Complete with AI." : "Couldn't start the AI request. Please try again." };
   }
   const jobId = (jobRow as { id: string }).id;
@@ -316,17 +342,21 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
  * product's AI lock is released so a new request can start at once. A request already sent to
  * the provider can't be recalled; its answer is only cached, never applied to the form.
  */
-export async function cancelProductAiAction(productId: unknown): Promise<ActionResult> {
+export async function cancelProductAiAction(productId: unknown, startedAfter?: unknown): Promise<ActionResult> {
   const session = await assertStaff("editor");
   if ("error" in session) return { ok: false, message: session.error };
   const id = z.string().uuid().safeParse(productId);
   if (!id.success) return { ok: false, message: "Invalid product." };
+  // only the caller's own request, started when they clicked (a little clock skew allowed)
+  const since = typeof startedAfter === "string" && !Number.isNaN(Date.parse(startedAfter)) ? new Date(Date.parse(startedAfter) - 60_000).toISOString() : new Date(Date.now() - STALE_MS).toISOString();
   const supabase = await createClient();
   await supabase
     .from("ai_jobs")
     .update({ status: "failed", completed_at: new Date().toISOString(), error_code: "CANCELLED", error_message: "Cancelled by the admin." })
     .eq("product_id", id.data)
     .eq("task_type", "complete")
-    .eq("status", "processing");
+    .eq("status", "processing")
+    .eq("requested_by", session.userId)
+    .gte("started_at", since);
   return { ok: true, message: "Cancelled. Nothing in the form was changed." };
 }
