@@ -167,23 +167,47 @@ id, never duplicated, new items become **drafts with price 0**, stock is updated
 - The key is sent only in the `X-API-Key` header, never in a URL, a browser response, a log line or an
   error message.
 
+### Batches → one product per phone (migration 0023)
+
+The Lovable inventory keeps one record per **purchase batch**; the same phone appears many times.
+The sync therefore never imports records one by one:
+
+- Every record is stored in `stock_source_batches` (batch id, group key, quantity, mapped fields — no purchase data).
+- **Group key** = normalised brand + model | RAM | ROM | condition, e.g. `redmi15c|6gb|128gb|new`.
+  Normalising: lower case, letters and digits only ("Go 3" = "Go-3" = "GO3"), the brand spellings
+  `Techno` → `Tecno`, `Remdi` → `Redmi`, `Villon` → `Villion`, "Xiaomi Redmi …" → "Redmi …",
+  "Samsung Galaxy …" → "Samsung …". RAM/ROM missing = `-` (never guessed). `exchange` counts as used.
+  Different RAM/ROM or New/Used are always different products; "13" and "13 Pro" stay apart.
+- **Website stock = sum of the group's batch quantities**, computed in the database from all stored
+  batches, only after a complete pass (every page read and the number of records seen reaches the
+  API's `total`) or after an incremental read. A batch not seen in a complete pass is marked
+  *missing* and no longer counted (nothing is deleted).
+- One website product per group (`stock_source_groups`):
+  - total stock ≤ 0 and no product yet → **nothing is created**;
+  - total > 0, no product, and **no similar existing product** → one **draft** (price 0) named after the
+    most recently updated batch;
+  - total > 0 and an existing website product looks similar (same condition, same brand, its name
+    contains the model) → **held**: the admin chooses "Link to …" or "Create new draft". Existing
+    products are never linked automatically;
+  - linked product (created by the sync or linked by an admin) → only `stock_quantity` is set to the
+    total (with an inventory log line); 0 when sold out. Name, prices, photos, text, SEO and status are
+    never changed; products are never deleted.
+
 ### Buttons
 
-1. **Check connection** — reads 2 records and saves the response format: which field holds the list,
-   the pagination fields, every source field name and how it maps (purchase/cost fields are never read or
-   shown). It also tests `updated_since`: if a date in the future returns no records, incremental sync is
-   marked *verified*; otherwise every sync reads all pages.
-2. **Preview 10 (no changes)** — with a page number: reads 10 records and shows, per record, the source
-   values and the proposed name, brand, model, RAM/ROM, condition, colour and stock (or why it would fail).
-   Nothing is written. The two import buttons stay disabled until a preview has been run.
-3. **Import first 5** — imports the first 5 records for real (new ones as drafts); does not move the checkpoint.
-4. **Sync Lovable Stock Now** — at most 4 pages × 50 records per click (Cloudflare Workers Free limits).
-   With more records it says "press Sync again to continue from page N" and remembers that page.
-   After a complete pass the checkpoint is set to the start of that pass minus 10 minutes; later syncs
-   then ask only for `updated_since=<checkpoint>` (when verified). A failure keeps everything already
-   imported, keeps the checkpoint, and the next click retries the failed page. If any record failed during
-   a full pass, no checkpoint is set, so the next sync reads every page again and retries it. A checkpoint
-   made with an older field mapping (`MAPPING_VERSION`) is ignored for the same reason.
+1. **Check connection** — reads 2 records and saves the response format (field names and mapping;
+   purchase/cost fields are never read or shown) and tests `updated_since`.
+2. **Preview all (no changes)** — reads every page (≤ 500 records), groups the batches and shows:
+   records, groups, total stock per group, groups skipped for 0 stock, new drafts, stock changes and
+   possible matches with existing products (with Link / Create buttons). It writes nothing. The import
+   buttons stay disabled until a preview has read every record and could use all of them.
+3. **Import first 5** — reads every page, stores the batches, creates at most 5 drafts and changes
+   nothing else (no stock changes, no checkpoint).
+4. **Sync Lovable Stock Now** — at most 4 pages × 50 records per click; with more records it continues
+   on the next click and applies the totals after the last page. After a complete pass in which every
+   record was usable, the checkpoint is set (start of the pass − 10 minutes); later syncs ask only for
+   `updated_since` (when verified). A failure, a source that changes during the pass, or an unusable
+   record never moves the checkpoint and never applies totals from an incomplete pass.
 
 Only one sync can run at a time (a lock in `stock_sync_state`, migration 0022; a crashed run's lock
 expires after 5 minutes).
@@ -199,7 +223,7 @@ expires after 5 minutes).
 | RAM / storage specs | `ram`, `rom` (plain numbers get "GB"); if empty, the "4/64" in the brand label | new drafts only |
 | condition | `condition`; Lovable keeps it in `category`: `new` → New, `used` / `exchange` → Used | new drafts only |
 | category | `category` only when it is a real category name (not new/used/exchange), matched to an **existing** category | new drafts only, never creates categories |
-| stock quantity | `stock_quantity` / `quantity` / `stock` | always (products without storage/colour options; others are flagged) |
+| stock quantity | sum of `stock_quantity` over the group's batches | always, for linked products without storage/colour options |
 | selling price | `selling_price` / `sale_price` / `price` | **reference only** (shown in Admin), never the website price |
 | image | `image_url` / `photo_url` | **reference only** (stored with the link); website photos are uploaded in Admin |
 | colour | `color` | stored with the link (reference) |

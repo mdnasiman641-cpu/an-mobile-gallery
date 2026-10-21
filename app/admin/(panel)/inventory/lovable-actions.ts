@@ -7,7 +7,7 @@ import { revalidatePath } from "next/cache";
 import { assertStaff } from "@/lib/auth";
 import { invalidateStock } from "@/lib/cache";
 import { getServiceClient } from "@/lib/supabase/admin";
-import { checkLovableConnection, previewLovableInventory, runLovableSync, type PageMeta, type PreviewRow, type RunSummary } from "@/lib/integrations/lovable-inventory";
+import { checkLovableConnection, decideLovableGroup, previewLovableInventory, runLovableSync, type PreviewResult, type RunSummary } from "@/lib/integrations/lovable-inventory";
 import type { ActionResult } from "@/types";
 
 export async function checkLovableConnectionAction(): Promise<ActionResult> {
@@ -35,17 +35,35 @@ export async function syncLovableStockAction(mode: unknown): Promise<ActionResul
   return { ok: res.ok, message: res.message, data: res.summary ? summary : undefined };
 }
 
-/** Read-only: fetches one page of 10 source records and shows how each would be mapped. Writes nothing. */
-export async function previewLovableStockAction(page: unknown): Promise<ActionResult<{ rows: PreviewRow[]; meta: PageMeta; page: number }>> {
+/** Read-only: reads every source page, groups the batches and shows what a sync would do. Writes nothing. */
+export async function previewLovableStockAction(): Promise<ActionResult<PreviewResult>> {
   const session = await assertStaff("admin");
   if ("error" in session) return { ok: false, message: session.error };
-  const n = typeof page === "number" ? page : Number(page);
-  const res = await previewLovableInventory(Number.isInteger(n) ? n : 1);
+  const res = await previewLovableInventory();
   if (!res.ok) return { ok: false, message: res.message };
-  const failed = res.rows.filter((r) => r.error).length;
+  const r = res.result;
   return {
     ok: true,
-    message: `Preview of page ${res.page}: ${res.rows.length} record(s), ${failed} would fail. Nothing was saved.`,
-    data: { rows: res.rows, meta: res.meta, page: res.page },
+    message: `Preview: ${r.records} records → ${r.groups.length} products. ${r.counts.create} new draft(s), ${r.counts.skip_zero} skipped (0 stock), ${r.counts.held} need a decision, ${r.counts.update} stock change(s). Nothing was saved.`,
+    data: r,
   };
+}
+
+/** Explicit admin mapping for one group: link to an existing product, create a new draft, or clear. */
+export async function decideLovableGroupAction(groupKey: unknown, decision: unknown, productId?: unknown): Promise<ActionResult> {
+  const session = await assertStaff("admin");
+  if ("error" in session) return { ok: false, message: session.error };
+  if (typeof groupKey !== "string") return { ok: false, message: "Invalid group." };
+  const d =
+    decision === "link" && typeof productId === "string"
+      ? ({ type: "link", productId } as const)
+      : decision === "create"
+        ? ({ type: "create" } as const)
+        : decision === "clear"
+          ? ({ type: "clear" } as const)
+          : null;
+  if (!d) return { ok: false, message: "Invalid decision." };
+  const res = await decideLovableGroup(groupKey, d, session.userId ?? null);
+  revalidatePath("/admin/inventory");
+  return res;
 }

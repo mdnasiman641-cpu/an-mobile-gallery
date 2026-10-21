@@ -40,11 +40,17 @@ async function lovableSyncView(supabase: Awaited<ReturnType<typeof createClient>
   const cfg = lovableConfig();
   const { data, error } = await supabase.from("stock_sync_state").select("*").eq("source", LOVABLE_SOURCE).maybeSingle();
   const row = (data ?? {}) as Record<string, unknown>;
+  // migration 0023 (batch grouping) is needed too: a cheap HEAD request
+  const groups = error ? null : await supabase.from("stock_source_groups").select("group_key", { count: "exact", head: true }).limit(1);
   const running = typeof row.running_since === "string" && Boolean(row.running_token) && Date.now() - Date.parse(row.running_since) < 5 * 60_000;
   return {
     configured: cfg.ok,
     configProblem: cfg.ok ? null : cfg.message,
-    migrationMissing: Boolean(error),
+    migrationMissing: error
+      ? "Run database migration 0022 (supabase/migrations/20261021000022_inventory_sync_state.sql) in the Supabase SQL editor first."
+      : groups?.error
+        ? "Run database migration 0023 (supabase/migrations/20261021000023_stock_source_groups.sql) in the Supabase SQL editor first."
+        : null,
     lastSuccessAt: (row.last_success_at as string | null) ?? null,
     lastAttemptAt: (row.last_attempt_at as string | null) ?? null,
     lastError: (row.last_error as string | null) ?? null,

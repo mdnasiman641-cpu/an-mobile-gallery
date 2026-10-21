@@ -11,10 +11,13 @@ import { conditionFromName } from "@/lib/utils";
  *   GET {LOVABLE_INVENTORY_API_URL}/api/public/inventory?page=&per_page=[&updated_since=]
  *   X-API-Key: {LOVABLE_INVENTORY_API_KEY}            (server-side only)
  *
- * Items go through the existing import (stock_sync_apply, migration 0010):
- * matched by the source's product id (product_external_sources), never
- * duplicated, new items become DRAFTS, stock is updated, the source price is
- * kept for reference only, nothing is ever deleted.
+ * Each source record is one purchase BATCH. Batches of the same phone (brand + model,
+ * RAM, ROM, condition → group key) become ONE website product whose stock is the sum of
+ * its batches (migration 0023: stock_source_batches / stock_source_groups). Groups with
+ * 0 stock create nothing; a group that looks like an existing website product waits for
+ * an admin to link it; existing products are never linked automatically. New groups
+ * become DRAFTS with price 0, the source price is kept for reference only, nothing is
+ * ever deleted.
  *
  * The response format is read defensively (several common shapes) and shown
  * to the admin by "Check connection" before anything is imported.
@@ -35,7 +38,7 @@ const MAX_BODY_CHARS = 5_000_000;
  * (the next sync reads every page again), so records that failed under an older
  * mapping are not skipped by an incremental sync.
  */
-export const MAPPING_VERSION = 2;
+export const MAPPING_VERSION = 3;
 
 // ---------------------------------------------------------------------------
 // Configuration (server only; the key never leaves this module)
@@ -197,7 +200,15 @@ const str = (v: unknown, max = 200): string | null => {
 };
 
 export interface MappedItem {
-  item: StockItem & { image_url: string | null };
+  item: StockItem & {
+    image_url: string | null;
+    /** Website brand the draft gets (exact brand name; see websiteBrandFor). */
+    website_brand: string | null;
+    /** Text compared with existing website product names to find possible matches. */
+    match_model: string | null;
+  };
+  /** Same phone + memory + condition → same key → one website product. */
+  groupKey: string;
   sourceUpdatedAt: string | null;
   /** How the product name was obtained (shown in the preview). */
   nameRule: "name field" | "brand + model" | "model only";
@@ -285,6 +296,51 @@ export function buildProductName(brand: string | null, model: string | null, ram
   return name.slice(0, 200);
 }
 
+// ---------------------------------------------------------------------------
+// Grouping: purchase batches of the same phone → one website product
+// ---------------------------------------------------------------------------
+
+/**
+ * Spelling variants seen in the source that name the same thing (whole words only).
+ * Used for the grouping key and brand lookup; the product name keeps the source text.
+ */
+const WORD_ALIASES: Record<string, string> = { techno: "tecno", remdi: "redmi", villon: "villion" };
+/** First word of the brand → website brand name (website brands are matched by exact name). */
+const WEBSITE_BRANDS: Record<string, string> = {
+  iphone: "Apple", apple: "Apple",
+  redmi: "Xiaomi", poco: "Xiaomi", xiaomi: "Xiaomi", mi: "Xiaomi",
+  tecno: "Tecno", infinix: "Infinix", itel: "Itel", oppo: "Oppo", vivo: "Vivo", realme: "Realme",
+  samsung: "Samsung", moto: "Motorola", motorola: "Motorola", pixel: "Google", google: "Google", oneplus: "OnePlus",
+  symphony: "Symphony", nokia: "Nokia", huawei: "Huawei", honor: "Honor",
+};
+
+function aliasWords(text: string): string[] {
+  const words = text.toLowerCase().split(/\s+/).filter(Boolean).map((w) => WORD_ALIASES[w] ?? w);
+  // "Xiaomi Redmi Note 14" = "Redmi Note 14"; "Samsung Galaxy A07" = "Samsung A07"
+  if (words[0] === "xiaomi" && (words[1] === "redmi" || words[1] === "poco")) words.shift();
+  if (words[0] === "samsung" && words[1] === "galaxy") words.splice(1, 1);
+  return words;
+}
+
+/** Letters and digits only, so "Go 3", "Go-3", "GO3" are the same model ("13" and "13 Pro" stay different). */
+export const normKey = (text: string): string => aliasWords(text).join("").replace(/[^a-z0-9]+/g, "");
+
+export function websiteBrandFor(brand: string | null): string | null {
+  const first = brand ? aliasWords(brand)[0] : undefined;
+  if (!first) return null;
+  return WEBSITE_BRANDS[first] ?? squash(brand ?? "").slice(0, 80);
+}
+
+/**
+ * Group key = normalised brand+model | RAM | ROM | condition, e.g. "redmi15c|6gb|128gb|new".
+ * A missing RAM or ROM is "-" (never guessed), so "iPhone 14 128GB" without RAM and
+ * "iPhone 14 6GB/128GB" stay apart. New and Used are always different groups.
+ */
+export function buildGroupKey(core: string, ram: string | null, storage: string | null, condition: StockItem["condition"]): string {
+  const mem = (v: string | null) => (v ? v.toLowerCase().replace(/\s+/g, "") : "-");
+  return `${normKey(core)}|${mem(ram)}|${mem(storage)}|${condition ?? "unknown"}`.slice(0, 300);
+}
+
 /** One source record → the existing import's item. Returns an error text for unusable records. */
 export function mapInventoryItem(raw: unknown): { ok: true; value: MappedItem } | { ok: false; id: string | null; error: string } {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, id: null, error: "Not an object" };
@@ -299,6 +355,8 @@ export function mapInventoryItem(raw: unknown): { ok: true; value: MappedItem } 
   const nameField = str(pickField(r, "name").value, 200);
   const nameRule: MappedItem["nameRule"] = nameField && nameField.length >= 2 ? "name field" : label.brand ? "brand + model" : "model only";
   const name = nameRule === "name field" ? nameField : buildProductName(label.brand, model, ram, storage);
+  // brand + model without memory: the phone itself
+  const core = buildProductName(label.brand, model, null, null) ?? (nameRule === "name field" ? nameField : null);
   if (!name) return { ok: false, id, error: "Missing product name (no name field, and brand + model don't form a name)" };
   const qtyRaw = num(pickField(r, "quantity").value);
   if (qtyRaw === null) return { ok: false, id, error: "Missing or invalid stock quantity" };
@@ -318,11 +376,16 @@ export function mapInventoryItem(raw: unknown): { ok: true; value: MappedItem } 
     categoryCondition ??
     isUsedFlag ??
     conditionFromName(name);
+  const websiteBrand = websiteBrandFor(label.brand);
+  // what an existing website product name would contain: the core without its brand word ("iPhone 13 Pro" → "13 Pro")
+  const coreWords = (core ?? "").split(" ");
+  const matchModel = label.brand && coreWords.length > 1 && WEBSITE_BRANDS[aliasWords(coreWords[0])[0] ?? ""] ? coreWords.slice(1).join(" ") : core;
   return {
     ok: true,
     value: {
       sourceUpdatedAt: updatedIso,
       nameRule,
+      groupKey: buildGroupKey(core ?? name, ram, storage, condition),
       item: {
         id,
         name,
@@ -341,6 +404,8 @@ export function mapInventoryItem(raw: unknown): { ok: true; value: MappedItem } 
         notes: null,
         removed: r.deleted === true || r.is_deleted === true,
         image_url: imageCandidate && /^https:\/\//.test(imageCandidate) ? imageCandidate : null,
+        website_brand: websiteBrand,
+        match_model: matchModel ? matchModel.slice(0, 120) : null,
       },
     },
   };
@@ -386,16 +451,23 @@ export function describeContract(page: Extract<PageResult, { ok: true }>) {
 export interface RunSummary {
   mode: "test" | "full" | "incremental";
   pages: number;
+  /** Source records read in this click. */
   received: number;
+  /** New website drafts created (one per group). */
   imported: number;
+  /** Linked products whose stock changed. */
   updated: number;
   unchanged: number;
+  /** Groups with total stock 0 and no website product: nothing created. */
   skipped: number;
+  /** Groups that look like an existing website product: waiting for an admin decision. */
+  held: number;
+  /** Source records that could not be used (see errors). */
   failed: number;
   finished: boolean;
   nextPage: number | null;
   errors: { id: string | null; error: string }[];
-  /** Website products whose stock or link changed (to refresh their pages). */
+  /** Website products whose stock changed (to refresh their pages). */
   changedProductIds: string[];
 }
 
@@ -414,7 +486,11 @@ interface SyncState {
 }
 
 const MIGRATION = "Run database migration 0022 (supabase/migrations/20261021000022_inventory_sync_state.sql) first.";
+const MIGRATION_23 = "Run database migration 0023 (supabase/migrations/20261021000023_stock_source_groups.sql) first.";
 const missingTable = (m: string) => /stock_sync_state/.test(m) && /does not exist|could not find|schema cache/i.test(m);
+const missing23 = (m: string) => /stock_source_(stage|finalize|candidates|groups|batches)/.test(m) && /does not exist|could not find|schema cache/i.test(m);
+/** Reads every page in one click for the preview and the test import (bounded: 10 pages × 50). */
+export const FULL_READ_MAX_PAGES = 10;
 
 export async function readSyncState(db: Db): Promise<SyncState | null> {
   const { data, error } = await db.from("stock_sync_state").select("*").eq("source", LOVABLE_SOURCE).maybeSingle();
@@ -445,44 +521,60 @@ async function saveState(db: Db, token: string, patch: Record<string, unknown>) 
     .eq("running_token", token);
 }
 
-/** Sends one page of mapped items through the existing import (one database call). */
-async function applyItems(db: Db, items: MappedItem[], summary: RunSummary) {
-  if (!items.length) return;
-  const { data, error } = await db.rpc("stock_sync_apply", { p_source: LOVABLE_SOURCE, p_trigger: "manual", p_items: items.map((m) => m.item) });
-  if (error) throw new Error(/stock_sync_apply/.test(error.message) ? "The stock import function is missing (migration 0010)." : `Import failed (${error.code ?? "error"}): ${error.message.slice(0, 200)}`);
-  const res = data as { items: { id: string; status: string; product_id: string | null; error: string | null }[] };
-  const imported: { productId: string; category: string }[] = [];
-  for (const r of res.items ?? []) {
-    if (r.status === "imported") summary.imported++;
-    else if (r.status === "updated" || r.status === "linked" || r.status === "removed_upstream") {
-      summary.updated++;
-      if (r.product_id && summary.changedProductIds.length < 500) summary.changedProductIds.push(r.product_id);
-    }
-    else if (r.status === "unchanged") summary.unchanged++;
-    else if (r.status === "failed") summary.failed++;
-    else summary.skipped++;
-    if ((r.status === "failed" || r.status === "skipped" || r.error) && summary.errors.length < 25) summary.errors.push({ id: r.id, error: r.error ?? r.status });
-    const cat = items.find((m) => m.item.id === r.id)?.item.category;
-    if (r.status === "imported" && r.product_id && cat) imported.push({ productId: r.product_id, category: cat });
-  }
-  // New drafts only: put them in the matching existing category (by name or slug). Never creates categories.
-  if (imported.length) {
-    const { data: cats } = await db.from("categories").select("id, name, slug");
-    const byName = new Map(((cats ?? []) as { id: string; name: string; slug: string }[]).flatMap((c) => [[c.name.toLowerCase(), c.id], [c.slug.toLowerCase(), c.id]] as [string, string][]));
-    const groups = new Map<string, string[]>();
-    for (const i of imported) {
-      const id = byName.get(i.category.toLowerCase());
-      if (id) groups.set(id, [...(groups.get(id) ?? []), i.productId]);
-    }
-    for (const [categoryId, ids] of groups) await db.from("products").update({ category_id: categoryId }).in("id", ids).is("category_id", null);
-  }
+/** The fields kept per batch (never purchase / cost data). */
+function batchItem(m: MappedItem) {
+  const it = m.item;
+  return {
+    name: it.name, brand: it.brand, model: it.model, ram: it.ram, storage: it.storage, condition: it.condition, color: it.color,
+    sale_price: it.sale_price, image_url: it.image_url, website_brand: it.website_brand, match_model: it.match_model,
+  };
+}
+
+/** Stores this click's records. Returns how many records have been seen in this pass so far. */
+async function stageBatches(db: Db, pass: string, mapped: MappedItem[], unusableIds: string[]): Promise<number> {
+  const { data, error } = await db.rpc("stock_source_stage", {
+    p_source: LOVABLE_SOURCE,
+    p_pass: pass,
+    p_items: mapped.map((m) => ({
+      id: m.item.id,
+      group_key: m.groupKey,
+      quantity: m.item.removed ? 0 : m.item.quantity,
+      item: batchItem(m),
+      source_updated_at: m.sourceUpdatedAt,
+    })),
+    p_seen_ids: unusableIds,
+  });
+  if (error) throw new Error(missing23(error.message) ? MIGRATION_23 : `Saving the source records failed (${error.code ?? "error"}).`);
+  return typeof data === "number" ? data : Number(data ?? 0);
+}
+
+interface FinalizeResult {
+  created: number;
+  updated: number;
+  unchanged: number;
+  skipped_zero: number;
+  held: number;
+  has_variants: number;
+  changed_product_ids: string[];
+}
+
+async function finalizeGroups(db: Db, pass: string, full: boolean, createLimit: number | null): Promise<FinalizeResult> {
+  const { data, error } = await db.rpc("stock_source_finalize", { p_source: LOVABLE_SOURCE, p_pass: pass, p_full: full, p_create_limit: createLimit });
+  if (error) throw new Error(missing23(error.message) ? MIGRATION_23 : `Updating the stock totals failed (${error.code ?? "error"}): ${error.message.slice(0, 200)}`);
+  return data as FinalizeResult;
 }
 
 /**
- * One click of "Sync Lovable Stock Now".
- *   test        first 5 records only; no checkpoint / resume change
- *   full        continues an unfinished pass, else starts at page 1; at most 4 pages per click
- *   incremental changes since the checkpoint (only when the API's updated_since was verified)
+ * One click of "Sync Lovable Stock Now" / "Import first 5".
+ *
+ * Every source record (= purchase batch) is stored with its group key; website stock is the
+ * SUM over a group's batches, computed in the database from all stored batches — never from
+ * one page. Totals are applied only after a COMPLETE pass (all pages; the number of records
+ * seen must reach the total the API reports), or after an incremental read of the changes.
+ *
+ *   test        reads every page (≤ 10), creates at most 5 drafts, changes nothing else
+ *   full        ≤ 4 pages per click; resumes at the next page; applies totals after the last page
+ *   incremental changes since the checkpoint (only when verified and a full pass was done)
  */
 export async function runLovableSync(
   mode: "test" | "auto",
@@ -503,34 +595,27 @@ export async function runLovableSync(
     return { ok: false, message: (e as Error).message };
   }
 
-  // stored with each run: the mapping version the checkpoint was made with, and failures so far in an unfinished full pass
   const prev = (state?.last_summary && typeof state.last_summary === "object" ? state.last_summary : {}) as { mappingVersion?: unknown; passFailed?: unknown };
   const prevVersion = typeof prev.mappingVersion === "number" ? prev.mappingVersion : null;
   const incremental =
     mode === "auto" && !state?.resume_page && Boolean(state?.checkpoint) && state?.incremental_supported === true && prevVersion === MAPPING_VERSION;
   const summary: RunSummary = {
     mode: mode === "test" ? "test" : incremental ? "incremental" : "full",
-    pages: 0,
-    received: 0,
-    imported: 0,
-    updated: 0,
-    unchanged: 0,
-    skipped: 0,
-    failed: 0,
-    finished: false,
-    nextPage: null,
-    errors: [],
-    changedProductIds: [],
+    pages: 0, received: 0, imported: 0, updated: 0, unchanged: 0, skipped: 0, held: 0, failed: 0,
+    finished: false, nextPage: null, errors: [], changedProductIds: [],
   };
-  const perPage = mode === "test" ? 5 : PER_PAGE;
-  const startPage = mode === "test" || incremental ? 1 : (state?.resume_page ?? 1);
-  const passStartedAt = summary.mode === "full" && startPage > 1 && state?.full_pass_started_at ? state.full_pass_started_at : new Date(now()).toISOString();
-  // always sent as UTC ISO-8601 (the database may return another offset)
+  const perPage = PER_PAGE;
+  const resuming = summary.mode === "full" && Boolean(state?.resume_page) && Boolean(state?.full_pass_started_at);
+  const startPage = resuming ? (state?.resume_page ?? 1) : 1;
+  const pass = resuming && state?.full_pass_started_at ? new Date(state.full_pass_started_at).toISOString() : new Date(now()).toISOString();
   const since = incremental && state?.checkpoint ? new Date(state.checkpoint).toISOString() : null;
-  const maxPages = mode === "test" ? 1 : MAX_PAGES_PER_RUN;
+  const maxPages = summary.mode === "full" ? MAX_PAGES_PER_RUN : FULL_READ_MAX_PAGES;
 
   let page = startPage;
   let failure: string | null = null;
+  let lastMeta: PageMeta | null = null;
+  const mapped: MappedItem[] = [];
+  const unusable: string[] = [];
   try {
     for (let n = 0; n < maxPages; n++) {
       const res = await fetchInventoryPage(cfg.config, { page, perPage, updatedSince: since }, deps.fetchImpl);
@@ -540,16 +625,16 @@ export async function runLovableSync(
       }
       summary.pages++;
       summary.received += res.items.length;
-      const mapped: MappedItem[] = [];
+      lastMeta = res.meta;
       for (const raw of res.items.slice(0, perPage * 2)) {
         const m = mapInventoryItem(raw);
         if (m.ok) mapped.push(m.value);
         else {
           summary.failed++;
+          if (m.id) unusable.push(m.id);
           if (summary.errors.length < 25) summary.errors.push({ id: m.id, error: m.error });
         }
       }
-      await applyItems(db, mapped, summary);
       const { meta } = res;
       const last =
         res.items.length === 0 ||
@@ -567,59 +652,94 @@ export async function runLovableSync(
     failure = (e as Error).message;
   }
 
-  if (mode === "test") summary.finished = !failure;
-  // `page` is the first page that is not done yet (the failed one, or the next one after the page limit)
-  summary.nextPage = summary.finished ? null : page;
+  // records failed anywhere in this full pass (earlier clicks included)
+  const priorPassFailed = resuming && typeof prev.passFailed === "number" ? prev.passFailed : 0;
+  const passFailed = summary.mode === "full" ? priorPassFailed + summary.failed : summary.failed;
+  let version: number | null = prevVersion;
+  const patch: Record<string, unknown> = {};
+  let note: string | null = null;
 
-  const ok = !failure;
+  try {
+    // stage what was read (also before a failure, so a resumed pass keeps the pages already done)
+    const seen = mapped.length || unusable.length ? await stageBatches(db, pass, mapped, unusable) : 0;
+
+    if (mode === "test") {
+      if (!failure && !summary.finished) failure = `The test reads at most ${FULL_READ_MAX_PAGES * perPage} records to compute totals; use Sync instead.`;
+      if (!failure && lastMeta?.total !== null && lastMeta?.total !== undefined && seen < lastMeta.total)
+        failure = `Only ${seen} of ${lastMeta.total} records were read (the source changed while reading). Try again.`;
+      if (!failure) {
+        const r = await finalizeGroups(db, pass, false, 5);
+        summary.imported = r.created;
+        summary.changedProductIds = [];
+      }
+    } else if (summary.mode === "full") {
+      if (failure || !summary.finished) {
+        // keep progress: totals are applied only after the last page
+        patch.resume_page = page;
+        patch.full_pass_started_at = pass;
+        if (!failure) note = `More records are waiting — press Sync again to continue from page ${page}. Stock is updated after the last page.`;
+      } else if (lastMeta?.total !== null && lastMeta?.total !== undefined && seen < lastMeta.total) {
+        // pages shifted while reading: never apply totals from an incomplete pass
+        patch.resume_page = null;
+        patch.full_pass_started_at = null;
+        failure = `Only ${seen} of ${lastMeta.total} source records were read in this pass (the source changed while reading). No stock was changed; press Sync again to start a fresh pass.`;
+      } else {
+        const r = await finalizeGroups(db, pass, true, null);
+        Object.assign(summary, { imported: r.created, updated: r.updated, unchanged: r.unchanged, skipped: r.skipped_zero, held: r.held });
+        summary.changedProductIds = (r.changed_product_ids ?? []).slice(0, 500);
+        patch.resume_page = null;
+        patch.full_pass_started_at = null;
+        patch.last_success_at = new Date(now()).toISOString();
+        if (passFailed === 0) {
+          // every record accepted: incremental syncs may start from here (never past the start of this pass)
+          patch.checkpoint = new Date(Date.parse(pass) - CHECKPOINT_OVERLAP_MS).toISOString();
+          version = MAPPING_VERSION;
+        } else {
+          patch.checkpoint = null;
+          version = null;
+          note = `${passFailed} source record(s) could not be used in this pass; the next sync reads every page again.`;
+        }
+      }
+    } else if (!failure) {
+      if (!summary.finished) {
+        // too many changes for one click: do a full pass next time instead
+        patch.checkpoint = null;
+        version = null;
+        note = "Many records changed: the next sync reads every page.";
+      }
+      const r = await finalizeGroups(db, pass, false, null);
+      Object.assign(summary, { imported: r.created, updated: r.updated, unchanged: r.unchanged, skipped: r.skipped_zero, held: r.held });
+      summary.changedProductIds = (r.changed_product_ids ?? []).slice(0, 500);
+      patch.last_success_at = new Date(now()).toISOString();
+      if (summary.finished && summary.failed === 0) patch.checkpoint = new Date(Date.parse(pass) - CHECKPOINT_OVERLAP_MS).toISOString();
+    }
+  } catch (e) {
+    failure = (e as Error).message;
+    if (summary.mode === "full") {
+      patch.resume_page = startPage;
+      patch.full_pass_started_at = pass;
+    }
+  }
+
+  summary.nextPage = summary.mode === "full" && patch.resume_page ? (patch.resume_page as number) : null;
   const at = new Date(now()).toISOString();
   const { changedProductIds: _ids, ...stored } = summary;
   void _ids;
-  // records that failed anywhere in this full pass (earlier clicks of the same pass included)
-  const priorPassFailed = summary.mode === "full" && startPage > 1 && typeof prev.passFailed === "number" ? prev.passFailed : 0;
-  const passFailed = summary.mode === "full" ? priorPassFailed + summary.failed : 0;
-  let version: number | null = prevVersion;
-  const patch: Record<string, unknown> = { last_error: failure ? failure.slice(0, 500) : null };
-  if (mode !== "test") {
-    if (ok && summary.finished) {
-      patch.resume_page = null;
-      patch.full_pass_started_at = null;
-      patch.last_success_at = at;
-      if (summary.mode === "full" && passFailed === 0) {
-        // whole pass done, every record accepted: move the checkpoint (never past the start of this pass)
-        patch.checkpoint = new Date(Date.parse(passStartedAt) - CHECKPOINT_OVERLAP_MS).toISOString();
-        version = MAPPING_VERSION;
-      } else if (summary.mode === "full") {
-        // some records failed: no checkpoint, so the next sync reads every page again and retries them
-        patch.checkpoint = null;
-        version = null;
-      } else if (summary.failed === 0) {
-        patch.checkpoint = new Date(Date.parse(passStartedAt) - CHECKPOINT_OVERLAP_MS).toISOString();
-      }
-      // incremental with failures: the checkpoint stays where it was, so the failed records are asked for again
-    } else if (summary.mode === "full") {
-      // keep progress: the next click continues at the page that is not done yet
-      patch.resume_page = page;
-      patch.full_pass_started_at = passStartedAt;
-      if (ok) patch.last_success_at = at;
-    }
-  }
+  patch.last_error = failure ? failure.slice(0, 500) : null;
   patch.last_summary = {
     ...stored,
     at,
     mappingVersion: version,
     // a test run must not reset the failure count of an unfinished full pass
-    passFailed: mode === "test" ? (typeof prev.passFailed === "number" ? prev.passFailed : 0) : passFailed,
+    passFailed: mode === "test" ? (typeof prev.passFailed === "number" ? prev.passFailed : 0) : summary.mode === "full" && patch.resume_page ? passFailed : 0,
   };
   await saveState(db, token, patch);
 
-  const counts = `${summary.imported} new, ${summary.updated} updated, ${summary.unchanged} unchanged, ${summary.skipped} skipped, ${summary.failed} failed`;
-  if (failure) return { ok: false, summary, message: `${failure} Nothing after that point was changed${summary.pages ? `; ${summary.pages} page(s) done before it (${counts})` : ""}.` };
-  if (mode === "test") return { ok: true, summary, message: `Test with the first ${perPage} records: ${counts}.` };
-  if (!summary.finished) return { ok: true, summary, message: `${counts}. More products are waiting — press Sync again to continue from page ${page}.` };
-  if (summary.mode === "full" && passFailed > 0)
-    return { ok: true, summary, message: `Sync complete (all products): ${counts}. ${passFailed} record(s) failed in this pass; the next sync reads every page again and retries them.` };
-  return { ok: true, summary, message: `Sync complete (${summary.mode === "incremental" ? "changes since the last sync" : "all products"}): ${counts}.` };
+  const counts = `${summary.imported} new draft(s), ${summary.updated} updated, ${summary.unchanged} unchanged, ${summary.skipped} skipped (0 stock), ${summary.held} need a decision, ${summary.failed} record(s) failed`;
+  if (failure) return { ok: false, summary, message: `${failure}${summary.pages ? ` (${summary.pages} page(s) read; no stock was changed)` : ""}` };
+  if (mode === "test") return { ok: true, summary, message: `Test: read ${summary.received} records, created ${summary.imported} draft(s) (at most 5). Nothing else was changed.` };
+  if (note && !summary.finished) return { ok: true, summary, message: `${summary.received} records read. ${note}` };
+  return { ok: true, summary, message: `Sync complete (${summary.mode === "incremental" ? "changes since the last sync" : "all products"}): ${counts}.${note ? ` ${note}` : ""}` };
 }
 
 /** "Check connection": one small request, plus a test of updated_since. Saves what was found. */
@@ -644,49 +764,181 @@ export async function checkLovableConnection(deps: { db?: Db | null; fetchImpl?:
 }
 
 // ---------------------------------------------------------------------------
-// Preview (read-only): shows how source records would be mapped. No database access.
+// Preview (read-only): reads every page, groups the batches and shows what a sync would do.
+// Database access is SELECT only (plus the read-only stock_source_candidates function).
 // ---------------------------------------------------------------------------
 
-export const PREVIEW_SIZE = 10;
+export type GroupAction = "create" | "skip_zero" | "update" | "unchanged" | "held" | "has_variants";
 
-export interface PreviewRow {
-  id: string | null;
-  /** Source values as received (purchase / cost fields are never read). */
-  source: Record<string, string>;
-  /** What the import would receive, or null when the record would fail. */
-  proposed: Omit<MappedItem["item"], "id" | "notes" | "removed" | "model_number" | "sku"> | null;
-  error: string | null;
-  nameRule: MappedItem["nameRule"] | null;
+export interface PreviewGroup {
+  key: string;
+  name: string;
+  condition: string | null;
+  ram: string | null;
+  storage: string | null;
+  batches: number;
+  total: number;
+  action: GroupAction;
+  /** Linked website product (explicit link or created earlier by this sync). */
+  product: { id: string; name: string; status: string; stock: number } | null;
+  /** Possible existing website products (shown when the group is held). */
+  candidates: { id: string; name: string; status: string; stock: number }[];
+  decision: "linked" | "create" | null;
 }
 
-function harmlessSource(r: Record<string, unknown>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(r)) {
-    if (NEVER_READ.test(k)) continue;
-    out[k] = v === null || v === undefined ? "" : typeof v === "object" ? (Array.isArray(v) ? `array(${v.length})` : "object") : String(v).slice(0, 120);
+export interface PreviewResult {
+  records: number;
+  pages: number;
+  complete: boolean;
+  failed: { id: string | null; error: string }[];
+  groups: PreviewGroup[];
+  counts: Record<GroupAction, number>;
+  totalStock: number;
+}
+
+/** Pure grouping of mapped records (same key → one group; stock is summed). */
+export function groupBatches(items: MappedItem[]) {
+  const groups = new Map<string, { key: string; rep: MappedItem; batches: number; total: number }>();
+  for (const m of items) {
+    const g = groups.get(m.groupKey);
+    const qty = m.item.removed ? 0 : m.item.quantity;
+    if (!g) groups.set(m.groupKey, { key: m.groupKey, rep: m, batches: 1, total: qty });
+    else {
+      g.batches++;
+      g.total += qty;
+      // the most recently updated batch names the group (as in the database)
+      if ((m.sourceUpdatedAt ?? "") > (g.rep.sourceUpdatedAt ?? "")) g.rep = m;
+    }
   }
-  return out;
+  return [...groups.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
 export async function previewLovableInventory(
-  page: number,
-  deps: { fetchImpl?: FetchLike; env?: Record<string, string | undefined> } = {},
-): Promise<{ ok: true; rows: PreviewRow[]; meta: PageMeta; page: number } | { ok: false; message: string }> {
+  deps: { db?: Db | null; fetchImpl?: FetchLike; env?: Record<string, string | undefined> } = {},
+): Promise<{ ok: true; result: PreviewResult } | { ok: false; message: string }> {
   const cfg = lovableConfig(deps.env);
   if (!cfg.ok) return { ok: false, message: cfg.message };
-  const p = Number.isInteger(page) && page >= 1 && page <= 100_000 ? page : 1;
-  const res = await fetchInventoryPage(cfg.config, { page: p, perPage: PREVIEW_SIZE }, deps.fetchImpl);
-  if (!res.ok) return { ok: false, message: res.message };
-  const rows: PreviewRow[] = res.items.slice(0, PREVIEW_SIZE).map((raw) => {
-    const r = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-    const m = mapInventoryItem(raw);
-    if (!m.ok) return { id: m.id, source: harmlessSource(r), proposed: null, error: m.error, nameRule: null };
-    const { id, notes: _n, removed: _r, model_number: _mn, sku: _s, ...proposed } = m.value.item;
-    void _n;
-    void _r;
-    void _mn;
-    void _s;
-    return { id, source: harmlessSource(r), proposed, error: null, nameRule: m.value.nameRule };
+  const db = deps.db === undefined ? getServiceClient() : deps.db;
+  if (!db) return { ok: false, message: "SUPABASE_SERVICE_ROLE_KEY is not set on the server." };
+
+  const mapped: MappedItem[] = [];
+  const failed: { id: string | null; error: string }[] = [];
+  let records = 0;
+  let pages = 0;
+  let complete = false;
+  let reported: number | null = null;
+  for (let page = 1; page <= FULL_READ_MAX_PAGES; page++) {
+    const res = await fetchInventoryPage(cfg.config, { page, perPage: PER_PAGE }, deps.fetchImpl);
+    if (!res.ok) return { ok: false, message: res.message };
+    pages++;
+    records += res.items.length;
+    reported = res.meta.total ?? reported;
+    for (const raw of res.items.slice(0, PER_PAGE * 2)) {
+      const m = mapInventoryItem(raw);
+      if (m.ok) mapped.push(m.value);
+      else failed.push({ id: m.id, error: m.error });
+    }
+    const { meta } = res;
+    if (
+      res.items.length === 0 ||
+      meta.hasMore === false ||
+      (meta.totalPages !== null && page >= meta.totalPages) ||
+      (meta.total !== null && page * PER_PAGE >= meta.total) ||
+      (meta.hasMore === null && meta.totalPages === null && meta.total === null && res.items.length < PER_PAGE)
+    ) {
+      complete = reported === null || records >= reported;
+      break;
+    }
+  }
+
+  const grouped = groupBatches(mapped);
+  // what is already stored: links and admin decisions (read only)
+  const { data: rows, error } = await db.from("stock_source_groups").select("group_key, product_id, link_decision").eq("source", LOVABLE_SOURCE);
+  if (error) return { ok: false, message: missing23(error.message) || /stock_source_groups/.test(error.message) ? MIGRATION_23 : `Reading links failed (${error.code ?? "error"}).` };
+  const stored = new Map(((rows ?? []) as { group_key: string; product_id: string | null; link_decision: "linked" | "create" | null }[]).map((r) => [r.group_key, r]));
+  const linkedIds = [...stored.values()].map((r) => r.product_id).filter((v): v is string => Boolean(v));
+  const products = new Map<string, { id: string; name: string; status: string; stock: number }>();
+  if (linkedIds.length) {
+    const { data } = await db.from("products").select("id, name, status, stock_quantity").in("id", linkedIds.slice(0, 1000));
+    for (const p of (data ?? []) as { id: string; name: string; status: string; stock_quantity: number }[]) products.set(p.id, { id: p.id, name: p.name, status: p.status, stock: p.stock_quantity });
+  }
+  // possible matches for groups that would otherwise create a draft (one read-only call)
+  const needCandidates = grouped.filter((g) => g.total > 0 && !(stored.get(g.key)?.product_id && products.has(stored.get(g.key)?.product_id ?? "")) && stored.get(g.key)?.link_decision !== "create");
+  let candidates: Record<string, { id: string; name: string; status: string; stock: number }[]> = {};
+  if (needCandidates.length) {
+    const { data, error: cErr } = await db.rpc("stock_source_candidates", {
+      p_source: LOVABLE_SOURCE,
+      p_groups: needCandidates.map((g) => ({ key: g.key, model: g.rep.item.match_model, brand: g.rep.item.website_brand, condition: g.rep.item.condition })),
+    });
+    if (cErr) return { ok: false, message: missing23(cErr.message) ? MIGRATION_23 : `Looking for matching products failed (${cErr.code ?? "error"}).` };
+    candidates = (data ?? {}) as typeof candidates;
+  }
+
+  const counts: Record<GroupAction, number> = { create: 0, skip_zero: 0, update: 0, unchanged: 0, held: 0, has_variants: 0 };
+  const groups: PreviewGroup[] = grouped.map((g) => {
+    const st = stored.get(g.key);
+    const product = st?.product_id ? (products.get(st.product_id) ?? null) : null;
+    const cands = candidates[g.key] ?? [];
+    let action: GroupAction;
+    if (product) action = product.stock === g.total ? "unchanged" : "update";
+    else if (g.total <= 0) action = "skip_zero";
+    else if (st?.link_decision !== "create" && cands.length) action = "held";
+    else action = "create";
+    counts[action]++;
+    const it = g.rep.item;
+    return { key: g.key, name: it.name, condition: it.condition, ram: it.ram, storage: it.storage, batches: g.batches, total: g.total, action, product, candidates: action === "held" ? cands : [], decision: st?.link_decision ?? null };
   });
-  return { ok: true, rows, meta: res.meta, page: p };
+  // linked groups that no longer appear in the source: their stock would become 0
+  for (const [key, st] of stored) {
+    if (grouped.some((g) => g.key === key)) continue;
+    const product = st.product_id ? (products.get(st.product_id) ?? null) : null;
+    if (!product) continue;
+    const action: GroupAction = product.stock === 0 ? "unchanged" : "update";
+    counts[action]++;
+    groups.push({ key, name: product.name, condition: null, ram: null, storage: null, batches: 0, total: 0, action, product, candidates: [], decision: st.link_decision });
+  }
+  return { ok: true, result: { records, pages, complete, failed: failed.slice(0, 50), groups, counts, totalStock: grouped.reduce((n, g) => n + g.total, 0) } };
+}
+
+// ---------------------------------------------------------------------------
+// Admin decision for one group (explicit, verified mapping)
+// ---------------------------------------------------------------------------
+
+const GROUP_KEY = /^[a-z0-9]{2,250}\|[a-z0-9.\-]{1,12}\|[a-z0-9.\-]{1,12}\|(new|used|refurbished|unknown)$/;
+
+export async function decideLovableGroup(
+  groupKey: string,
+  decision: { type: "link"; productId: string } | { type: "create" } | { type: "clear" },
+  userId: string | null,
+  deps: { db?: Db | null } = {},
+): Promise<{ ok: boolean; message: string }> {
+  if (!GROUP_KEY.test(groupKey)) return { ok: false, message: "Invalid group." };
+  const db = deps.db === undefined ? getServiceClient() : deps.db;
+  if (!db) return { ok: false, message: "SUPABASE_SERVICE_ROLE_KEY is not set on the server." };
+  const base = { source: LOVABLE_SOURCE, group_key: groupKey, updated_at: new Date().toISOString() };
+  let row: Record<string, unknown>;
+  if (decision.type === "link") {
+    if (!/^[0-9a-f-]{36}$/i.test(decision.productId)) return { ok: false, message: "Invalid product." };
+    const { data: product } = await db.from("products").select("id, name").eq("id", decision.productId).maybeSingle();
+    if (!product) return { ok: false, message: "That product no longer exists." };
+    const { data: other } = await db.from("stock_source_groups").select("group_key").eq("source", LOVABLE_SOURCE).eq("product_id", decision.productId).neq("group_key", groupKey).maybeSingle();
+    if (other) return { ok: false, message: "That product is already linked to another Lovable group." };
+    row = { ...base, product_id: decision.productId, link_decision: "linked", linked_by: userId, linked_at: new Date().toISOString(), status: "pending", match_candidates: [] };
+  } else if (decision.type === "create") {
+    row = { ...base, product_id: null, link_decision: "create", linked_by: userId, linked_at: new Date().toISOString(), status: "pending", match_candidates: [] };
+  } else {
+    // unlink: the product keeps its current stock; the group waits for a new decision
+    row = { ...base, product_id: null, link_decision: null, linked_by: null, linked_at: null, status: "pending" };
+  }
+  const { error } = await db.from("stock_source_groups").upsert(row, { onConflict: "source,group_key" });
+  if (error) return { ok: false, message: missing23(error.message) || /stock_source_groups/.test(error.message) ? MIGRATION_23 : `Saving failed (${error.code ?? "error"}).` };
+  return {
+    ok: true,
+    message:
+      decision.type === "link"
+        ? "Linked. The next sync sets this product's stock to the group's total (nothing else on the product changes)."
+        : decision.type === "create"
+          ? "The next sync creates a new draft for this group."
+          : "Link removed. The product keeps its current stock.",
+  };
 }
