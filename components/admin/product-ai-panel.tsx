@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { AlertTriangle, CheckCircle2, Eraser, RefreshCw, Search, Sparkles } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Eraser, RefreshCw, Search, ShieldCheck, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/form";
 import { Badge } from "@/components/ui/misc";
@@ -43,6 +43,8 @@ export interface AiPanelProps {
   disabled: boolean;
   /** research: search the web again instead of reusing recent research. */
   onComplete: (sections: CompletionSection[], research?: boolean) => void;
+  /** Stop waiting for a running request (the form is not changed). */
+  onCancel: () => void;
   run: CompletionRun | null;
   justCompleted: boolean;
   error: { message: string; details: string[]; draftSaved: boolean } | null;
@@ -79,16 +81,20 @@ const STATE_BADGE: Record<FieldState, { tone: "signal" | "warn" | "deal" | "neut
 };
 
 /**
- * One generation action per section. "Research product" always runs a new web
- * search; the others reuse research from the last 7 days for the same product.
- * Basic info and specifications are always written from a web search first.
+ * One workflow: "Generate all" fills every empty part in ONE request (it never replaces
+ * anything). The single-part actions replace earlier AI text in their part (your own edits
+ * only after confirmation). "Verify specifications" / "Research product" always run a new
+ * web search; the others reuse research from the last 7 days for the same product.
  */
-const ACTIONS: { label: string; sections: CompletionSection[]; research?: boolean }[] = [
-  { label: "Research product", sections: ["basic", "specs"], research: true },
-  { label: "Generate specifications", sections: ["specs"] },
+const MAIN_ACTIONS: { label: string; sections: CompletionSection[]; research?: boolean }[] = [
   { label: "Generate description", sections: ["description"] },
   { label: "Generate SEO", sections: ["seo"] },
+  { label: "Verify specifications", sections: ["specs"], research: true },
+];
+const MORE_ACTIONS: { label: string; sections: CompletionSection[]; research?: boolean }[] = [
   { label: "Generate FAQ", sections: ["faq"] },
+  { label: "Generate specifications", sections: ["specs"] },
+  { label: "Research product (name, brand, model + specifications)", sections: ["basic", "specs"], research: true },
 ];
 
 export function ProductAiPanel(p: AiPanelProps) {
@@ -107,9 +113,12 @@ export function ProductAiPanel(p: AiPanelProps) {
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h2 id="ai-quick-title" className="flex items-center gap-2 text-base font-bold">
-            <Sparkles className="h-5 w-5 text-signal" aria-hidden /> Quick start
+            <Sparkles className="h-5 w-5 text-signal" aria-hidden /> AI Product Assistant
           </h2>
-          <p className="text-sm text-ink-soft">Enter these four, then let AI fill in the rest for you to review. AI never changes them and never publishes.</p>
+          <p className="text-sm text-ink-soft">
+            1 · Enter these four. 2 · Click <strong>Generate all</strong>. 3 · Review the filled-in fields and save as a draft. AI never changes these four, prices, photos,
+            stock or status, and never publishes.
+          </p>
         </div>
       </div>
 
@@ -128,67 +137,86 @@ export function ProductAiPanel(p: AiPanelProps) {
         </Field>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <Button type="button" onClick={() => p.onComplete([...COMPLETION_SECTIONS])} loading={p.busy} disabled={p.disabled || Boolean(p.setupMessage)}>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          onClick={p.onGenerateMissing}
+          loading={p.busy}
+          disabled={blocked || p.missing.length === 0}
+          title={p.missing.length ? `Fills: ${p.missing.map((m) => SECTION_LABELS[m]).join(", ")}` : "Every part is filled; use a single action or More options to regenerate"}
+        >
           {p.busy ? null : <Sparkles className="h-4 w-4" aria-hidden />}
-          {ran ? "Complete again with AI" : "Complete with AI"}
+          {p.missing.length ? "Generate all" : "Generate all — nothing missing"}
         </Button>
+        {MAIN_ACTIONS.map((a) => (
+          <Button key={a.label} type="button" size="sm" variant="outline" disabled={blocked} onClick={() => p.onComplete(a.sections, a.research)}>
+            {a.research ? <ShieldCheck className="h-3.5 w-3.5" aria-hidden /> : <Sparkles className="h-3.5 w-3.5" aria-hidden />} {a.label}
+          </Button>
+        ))}
+        {p.busy ? (
+          <Button type="button" size="sm" variant="ghost" onClick={p.onCancel}>
+            <X className="h-4 w-4" aria-hidden /> Cancel
+          </Button>
+        ) : null}
         {p.aiFieldCount > 0 && !p.busy ? (
           <Button type="button" variant="ghost" size="sm" onClick={p.onRemoveAll}>
             <Eraser className="h-4 w-4" aria-hidden /> Remove AI content
           </Button>
         ) : null}
-        <p className="text-xs text-ink-mute" aria-live="polite">
-          {p.busy
-            ? p.busySections.some((s) => s === "basic" || s === "specs")
-              ? "Searching the web for this exact model, then writing the listing… (this can take a minute)"
-              : "AI is writing…"
-            : ran && p.run ? `Last AI run ${relativeTime(p.run.createdAt)} · ${p.run.usedModel}` : null}
-        </p>
       </div>
+      <p className="mt-2 text-xs text-ink-mute" aria-live="polite">
+        {p.busy
+          ? p.busySections.length > 1
+            ? `Writing ${p.busySections.map((s) => SECTION_LABELS[s]).join(", ")} in one request… You can keep editing other fields or cancel.`
+            : p.busySections.some((s) => s === "basic" || s === "specs")
+              ? "Checking the specifications… You can cancel."
+              : "AI is writing… You can cancel."
+          : ran && p.run
+            ? `Last AI run ${relativeTime(p.run.createdAt)} · ${p.run.usedModel}`
+            : p.missing.length
+              ? `Generate all fills: ${p.missing.map((m) => SECTION_LABELS[m]).join(", ")} — only empty fields, nothing you entered is replaced.`
+              : null}
+      </p>
 
-      <div className="mt-4 space-y-3 rounded-lg bg-paper p-3">
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Generate one part">
-          {ACTIONS.map((a) => (
-            <Button key={a.label} type="button" size="sm" variant="outline" disabled={blocked} onClick={() => p.onComplete(a.sections, a.research)}>
-              {a.research ? <Search className="h-3.5 w-3.5" aria-hidden /> : <Sparkles className="h-3.5 w-3.5" aria-hidden />} {a.label}
+      <details className="mt-3 rounded-lg bg-paper p-3 [&[open]>summary_svg]:rotate-180">
+        <summary className="flex cursor-pointer list-none items-center gap-1 text-sm font-semibold">
+          More options <ChevronDown className="h-4 w-4 transition-transform" aria-hidden />
+        </summary>
+        <div className="mt-3 space-y-3">
+          <div className="flex flex-wrap gap-2" role="group" aria-label="More AI actions">
+            {MORE_ACTIONS.map((a) => (
+              <Button key={a.label} type="button" size="sm" variant="outline" className="h-auto min-h-9 whitespace-normal py-1.5 text-left" disabled={blocked} onClick={() => p.onComplete(a.sections, a.research)}>
+                {a.research ? <Search className="h-3.5 w-3.5" aria-hidden /> : <Sparkles className="h-3.5 w-3.5" aria-hidden />} {a.label}
+              </Button>
+            ))}
+            <Button type="button" size="sm" variant="outline" disabled={blocked} onClick={() => p.onComplete([...COMPLETION_SECTIONS])}>
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Regenerate all parts
             </Button>
-          ))}
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="h-auto min-h-9 whitespace-normal py-1.5 text-left"
-            disabled={blocked || p.missing.length === 0}
-            onClick={p.onGenerateMissing}
-          >
-            Generate all missing fields{p.missing.length ? ` (${p.missing.map((m) => SECTION_LABELS[m]).join(", ")})` : " — none missing"}
-          </Button>
+          </div>
+          <fieldset className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <legend className="sr-only">Regenerate selected parts</legend>
+            <span className="text-xs font-semibold text-ink-mute">Regenerate selected:</span>
+            {COMPLETION_SECTIONS.map((s) => (
+              <label key={s} className="inline-flex min-h-8 items-center gap-1.5 text-sm">
+                <input type="checkbox" className="h-4 w-4 accent-[var(--color-signal)]" checked={selected.includes(s)} onChange={() => toggle(s)} />
+                {SECTION_LABELS[s]}
+              </label>
+            ))}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={blocked || selected.length === 0}
+              onClick={() => p.onComplete(COMPLETION_SECTIONS.filter((s) => selected.includes(s)))}
+            >
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Regenerate selected
+            </Button>
+          </fieldset>
+          <p className="text-xs text-ink-mute">
+            Regenerating replaces earlier AI text in those parts; fields you edited yourself are only replaced after you confirm.
+          </p>
         </div>
-        <fieldset className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <legend className="sr-only">Regenerate selected parts</legend>
-          <span className="text-xs font-semibold text-ink-mute">Regenerate selected:</span>
-          {COMPLETION_SECTIONS.map((s) => (
-            <label key={s} className="inline-flex min-h-8 items-center gap-1.5 text-sm">
-              <input type="checkbox" className="h-4 w-4 accent-[var(--color-signal)]" checked={selected.includes(s)} onChange={() => toggle(s)} />
-              {SECTION_LABELS[s]}
-            </label>
-          ))}
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={blocked || selected.length === 0}
-            onClick={() => p.onComplete(COMPLETION_SECTIONS.filter((s) => selected.includes(s)))}
-          >
-            <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Regenerate selected
-          </Button>
-        </fieldset>
-        <p className="text-xs text-ink-mute">
-          “Generate all missing fields” only fills empty fields and adds missing specifications; it never replaces what is already there. The other buttons replace AI text in their
-          part (your own edits are kept unless you confirm).
-        </p>
-      </div>
+      </details>
 
       {p.setupMessage ? (
         <p className="mt-3 rounded-lg bg-warn-tint p-3 text-sm">

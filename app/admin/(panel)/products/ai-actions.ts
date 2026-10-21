@@ -24,16 +24,22 @@ import { conditionFromName, conditionLabel } from "@/lib/utils";
 import type { ActionResult } from "@/types";
 
 /**
- * Admin → Products → Complete with AI.
+ * Admin → Products → AI Product Assistant ("Generate All" and the single-part actions).
  *
- * Runs ONE AI request (with automatic failover across the configured models)
- * and returns suggestions for the form. It never writes to the product: the
+ * At most: one web-research request (only when it can return sources), ONE structured
+ * JSON request for all requested parts, and one follow-up for required fields that came
+ * back empty — each with automatic failover across the configured models — and returns
+ * suggestions for the form. It never writes to the product: the
  * admin reviews the filled-in form and saves / publishes it themselves.
  * The result is cached on the product so a page reload shows it again
  * without another AI request.
  */
 
 const STALE_MS = 5 * 60_000;
+/** Models tried per step when Settings → AI sets no limit (each try can wait up to 90 s). */
+const DEFAULT_MAX_ATTEMPTS = 3;
+/** No follow-up request after this much time: the admin can retry the missing parts. */
+const FOLLOW_UP_BUDGET_MS = 60_000;
 
 const inputSchema = z.object({
   productId: z.string().uuid(),
@@ -65,11 +71,21 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
   const sections = Array.from(new Set(input.sections));
   const supabase = await createClient();
 
-  const [productRes, brandsRes, categoriesRes, cacheRes] = await Promise.all([
+  const startedAt = Date.now();
+  const [productRes, brandsRes, categoriesRes, cacheRes, lastNoSourcesRes, modelsChangedRes] = await Promise.all([
     supabase.from("products").select("id").eq("id", input.productId).maybeSingle(),
     supabase.from("brands").select("id, name").eq("is_active", true).order("name"),
     supabase.from("categories").select("id, name").eq("is_active", true).order("name"),
     supabase.from("ai_product_content").select("form_completion").eq("product_id", input.productId).maybeSingle(),
+    // the last web research (any product) that came back without sources, and the last change to the AI models
+    supabase
+      .from("ai_product_content")
+      .select("research_at:form_completion->research->>at, research_model:form_completion->research->>model")
+      .eq("form_completion->research->>status", "no_sources")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase.from("ai_models").select("updated_at").order("updated_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
   const cachedRun = (cacheRes.data as { form_completion: CompletionRun | null } | null)?.form_completion ?? null;
   if (!productRes.data) return { ok: false, message: "The product draft couldn't be found. Save it and try again." };
@@ -129,11 +145,24 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
     const wantsFacts = sections.includes("basic") || sections.includes("specs") || (completionInput.knownSpecs?.length ?? 0) < 5;
     let research: ProductResearch | null = null;
     let researchAttempts = 0;
+    // The configured research model answered WITHOUT a web search last time (no sources) and the AI
+    // models haven't changed since: its notes would be discarded again, so don't wait for it.
+    const noSources = lastNoSourcesRes.data as { research_at: string | null; research_model: string | null } | null;
+    const modelsChangedAt = Date.parse((modelsChangedRes.data as { updated_at: string } | null)?.updated_at ?? "") || 0;
+    const noSourcesAt = Date.parse(noSources?.research_at ?? "") || 0;
+    const researchCantSearch = noSourcesAt > modelsChangedAt && Date.now() - noSourcesAt < RESEARCH_MAX_AGE_MS;
     if (wantsFacts || reusable) {
       if (reusable && !input.forceResearch) research = recent;
+      else if (researchCantSearch && !input.forceResearch)
+        research = emptyResearch(
+          "unavailable",
+          `Web research skipped: ${noSources?.research_model ?? "the research model"} returned no web sources on its last run, so nothing could be verified. Turn on a model that can search the web (for example Gemini with Google Search) in Settings → AI, or use “Verify specifications”.`,
+          key,
+        );
       else {
         const r = await runAi(buildResearchRequest(completionInput), {
           jobId,
+          defaultMaxAttempts: DEFAULT_MAX_ATTEMPTS,
           validate: (res) => {
             if (!res.text.trim()) throw new AiProviderError("INVALID_RESPONSE", "Empty research answer");
           },
@@ -159,6 +188,7 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
     const answer: { completion: ProductCompletion | null } = { completion: null };
     const result = await runAi(buildCompletionRequest(completionInput), {
       jobId,
+      defaultMaxAttempts: DEFAULT_MAX_ATTEMPTS,
       // Not JSON, or JSON without any requested field, counts as a failure: the next model is tried.
       validate: (res) => {
         answer.completion = readAnswer(res, completionInput);
@@ -188,10 +218,14 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
     // The model answered but left required fields empty: ask once more, only for those
     // sections, and keep everything that was already filled.
     const retry = check.retrySections.filter((x) => sections.includes(x));
-    if (retry.length && check.status !== "failed") {
+    if (retry.length && check.status !== "failed" && Date.now() - startedAt < FOLLOW_UP_BUDGET_MS) {
       const retryInput: CompletionInput = { ...completionInput, sections: retry };
       const second: { completion: ProductCompletion | null } = { completion: null };
-      const again = await runAi(buildCompletionRequest(retryInput), { jobId, validate: (res) => void (second.completion = readAnswer(res, retryInput)) });
+      const again = await runAi(buildCompletionRequest(retryInput), {
+        jobId,
+        defaultMaxAttempts: DEFAULT_MAX_ATTEMPTS,
+        validate: (res) => void (second.completion = readAnswer(res, retryInput)),
+      });
       followUp = again.attempts.filter((a) => a.status !== "skipped").length;
       if (again.ok && second.completion) {
         const extra = second.completion;
@@ -275,4 +309,24 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
     await finish("failed", { error_code: e instanceof AiSetupError ? "SETUP" : "ERROR", error_message: message.slice(0, 1000) });
     return { ok: false, message };
   }
+}
+
+/**
+ * "Cancel" in the AI Product Assistant: the form stops waiting (nothing in it changes) and the
+ * product's AI lock is released so a new request can start at once. A request already sent to
+ * the provider can't be recalled; its answer is only cached, never applied to the form.
+ */
+export async function cancelProductAiAction(productId: unknown): Promise<ActionResult> {
+  const session = await assertStaff("editor");
+  if ("error" in session) return { ok: false, message: session.error };
+  const id = z.string().uuid().safeParse(productId);
+  if (!id.success) return { ok: false, message: "Invalid product." };
+  const supabase = await createClient();
+  await supabase
+    .from("ai_jobs")
+    .update({ status: "failed", completed_at: new Date().toISOString(), error_code: "CANCELLED", error_message: "Cancelled by the admin." })
+    .eq("product_id", id.data)
+    .eq("task_type", "complete")
+    .eq("status", "processing");
+  return { ok: true, message: "Cancelled. Nothing in the form was changed." };
 }

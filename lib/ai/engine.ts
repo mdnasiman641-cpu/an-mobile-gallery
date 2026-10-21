@@ -168,10 +168,16 @@ async function persist(touched: AiModelHealth[], attempts: AttemptRecord[], jobI
 
 export async function runAi(
   req: AiRequest,
-  opts: { jobId?: string | null; onlyModelId?: string; validate?: (res: AiResponse) => void } = {},
+  opts: {
+    jobId?: string | null;
+    onlyModelId?: string;
+    validate?: (res: AiResponse) => void;
+    /** Models to call at most when Settings → AI has no "max attempts" (interactive requests stay bounded). */
+    defaultMaxAttempts?: number;
+  } = {},
 ): Promise<FailoverResult> {
   const deps = await loadDeps();
-  const result = await runWithFailover(req, { ...deps, onlyModelId: opts.onlyModelId, validate: opts.validate });
+  const result = await runWithFailover(req, { ...deps, maxAttempts: deps.maxAttempts ?? opts.defaultMaxAttempts ?? null, onlyModelId: opts.onlyModelId, validate: opts.validate });
   const { touched, ...rest } = result;
   await persist(touched, result.attempts, opts.jobId ?? null);
   return rest as FailoverResult;

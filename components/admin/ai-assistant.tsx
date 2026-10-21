@@ -25,13 +25,10 @@ export interface AssistantProps {
   external: { source: string; id: string; syncedAt: string; status: string; error: string | null; quantity: number | null; removed: boolean } | null;
 }
 
-const TASKS: { task: ContentTask; label: string }[] = [
-  { task: "verify", label: "Verify Specifications" },
-  { task: "seo", label: "Generate SEO" },
-  { task: "description", label: "Generate Description" },
-  { task: "faq", label: "Generate FAQ" },
-  { task: "improve", label: "Improve Existing Content" },
-];
+// Generating, verifying, SEO, description and FAQ live in the AI Product Assistant at the top of the
+// form (one workflow). This section shows what AI produced and keeps the one action that only
+// exists here: improving the saved content in place.
+const TASKS: { task: ContentTask; label: string }[] = [{ task: "improve", label: "Improve existing content" }];
 
 const STATUS_TEXT: Record<NonNullable<AssistantProps["reviewStatus"]>, string> = {
   pending: "Pending",
@@ -87,16 +84,13 @@ export function AiAssistant(props: AssistantProps) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 id="ai-assistant" className="flex items-center gap-2 text-lg font-bold">
-            <Sparkles className="h-5 w-5 text-brand" aria-hidden /> AI Assistant
+            <Sparkles className="h-5 w-5 text-brand" aria-hidden /> AI review &amp; sources
           </h2>
           <p className="text-sm text-ink-soft">
             {props.reviewStatus ? <Badge tone={props.reviewStatus === "ready" ? "signal" : props.reviewStatus === "failed" ? "deal" : props.reviewStatus === "needs_verification" ? "warn" : "neutral"}>{STATUS_TEXT[props.reviewStatus]}</Badge> : null}{" "}
             {generated ? `Generated ${new Date(props.generatedAt!).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}${props.model ? ` with ${props.model}` : ""}` : "No AI content yet."}
           </p>
         </div>
-        <Button onClick={() => request("full")} loading={running === "full"} disabled={pending}>
-          {generated ? "Regenerate" : "Generate Product Content"}
-        </Button>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1.5">
@@ -107,8 +101,8 @@ export function AiAssistant(props: AssistantProps) {
         ))}
       </div>
       <p className="mt-2 text-xs text-ink-mute">
-        AI writes text, specifications and SEO only. It never sets prices, discounts, EMI, images or publishes. Save any unsaved changes in the form below first; the form reloads with
-        the AI result. Generation can take up to a minute.
+        To generate or regenerate content, use the AI Product Assistant at the top of the form. “Improve existing content” rewrites the saved text in place: save any
+        unsaved changes first; the form reloads with the result. AI never sets prices, discounts, EMI, images or stock and never publishes.
       </p>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">

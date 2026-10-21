@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { ArrowDown, ArrowUp, Copy, ExternalLink, ImagePlus, Plus, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { saveProductAction, duplicateProductAction, deleteProductAction } from "@/app/admin/(panel)/products/actions";
-import { completeProductWithAiAction } from "@/app/admin/(panel)/products/ai-actions";
+import { cancelProductAiAction, completeProductWithAiAction } from "@/app/admin/(panel)/products/ai-actions";
 import { AiTag, ProductAiPanel, type ReviewItem } from "@/components/admin/product-ai-panel";
 import { SpecEditor } from "@/components/admin/spec-editor";
 import {
@@ -118,6 +118,9 @@ export function ProductForm({
   const [confirm, setConfirm] = useState<{ proposed: AiFormValues; conflicts: string[] } | null>(null);
   const [lastApply, setLastApply] = useState<{ applied: string[]; kept: string[] } | null>(null);
   const busyRef = useRef(false);
+  // the run whose answer may still be applied; Cancel moves it on so a late answer is ignored
+  const runIdRef = useRef(0);
+  const aiProductRef = useRef<string | null>(null);
   const vRef = useRef(v);
   const aiRef = useRef(ai);
   useEffect(() => {
@@ -361,6 +364,7 @@ export function ProductForm({
       return;
     }
     busyRef.current = true;
+    const runId = ++runIdRef.current;
     setAiBusy(true);
     setBusySections(sections);
     setAiError(null);
@@ -369,7 +373,8 @@ export function ProductForm({
     let draftId: string | null = null;
     try {
       draftId = await ensureDraft();
-      if (!draftId) return;
+      if (!draftId || runId !== runIdRef.current) return;
+      aiProductRef.current = draftId;
       const res = await completeProductWithAiAction({
         productId: draftId,
         name: cur.name,
@@ -387,6 +392,7 @@ export function ProductForm({
           .map((r) => ({ name: r.name.trim().slice(0, 80), value: r.value.trim().slice(0, 500) })),
         forceResearch,
       });
+      if (runId !== runIdRef.current) return; // cancelled: the form stays as it is
       if (!res.ok || !res.data) {
         setAiError({ message: res.message ?? "All configured AI models are currently unavailable.", details: res.attempts ?? [], draftSaved: true });
         return;
@@ -402,12 +408,26 @@ export function ProductForm({
       if (data.check && data.check.status !== "success") toast.warning(res.message ?? "Partly completed. Check the field status.");
       else toast.success("AI completed the product information. Please review before saving.");
     } catch {
-      setAiError({ message: "The AI request failed. Please try again.", details: [], draftSaved: Boolean(draftId) });
+      if (runId === runIdRef.current) setAiError({ message: "The AI request failed. Please try again.", details: [], draftSaved: Boolean(draftId) });
     } finally {
-      busyRef.current = false;
-      setAiBusy(false);
-      setBusySections([]);
+      if (runId === runIdRef.current) {
+        busyRef.current = false;
+        setAiBusy(false);
+        setBusySections([]);
+      }
     }
+  }
+
+  /** Stop waiting for the AI: nothing in the form changes; a late answer is ignored. */
+  function cancelAi() {
+    if (!busyRef.current) return;
+    runIdRef.current += 1;
+    busyRef.current = false;
+    setAiBusy(false);
+    setBusySections([]);
+    const id = aiProductRef.current;
+    if (id) void cancelProductAiAction(id);
+    toast("AI request cancelled. Nothing in the form was changed.");
   }
 
   function clearAi(fields: AiField[]) {
@@ -477,6 +497,7 @@ export function ProductForm({
         busy={aiBusy}
         disabled={saving || uploading > 0}
         onComplete={(sections, research) => void completeWithAi(sections, "fill", Boolean(research))}
+        onCancel={cancelAi}
         check={check}
         busySections={busySections}
         missing={missing}

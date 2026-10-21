@@ -15,6 +15,7 @@ import { buildListingHref } from "@/lib/listing";
 export const metadata: Metadata = { title: "Inventory" };
 
 const PER_PAGE = 30;
+const INVENTORY_SELECT = "id, name, sku, stock_quantity, low_stock_threshold, status, product_variants(id, sku, storage, ram, color, stock, status)";
 const REASON: Record<string, string> = {
   initial: "Opening stock",
   restock: "Restock",
@@ -69,16 +70,47 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   const page = Math.max(1, Number(sp.page) || 1);
   const supabase = await createClient();
 
-  let query = supabase
-    .from("products")
-    .select("id, name, sku, stock_quantity, low_stock_threshold, status, product_variants(id, sku, storage, ram, color, stock, status)", { count: "exact" })
-    .neq("status", "archived");
+  // In stock first (A–Z), then out of stock (0 before any negative, A–Z). Done in the database:
+  // the in-stock and out-of-stock parts are paged separately, so only one page is ever fetched.
   const q = escapeFilter(sp.q ?? "");
-  if (q) query = query.or(`name.ilike.%${q}%,sku.ilike.%${q}%`);
-  if (sp.filter === "out") query = query.lte("stock_quantity", 0);
-  if (sp.filter === "low") query = query.gt("stock_quantity", 0).lte("stock_quantity", 5);
-  const { data, count } = await query.order("stock_quantity").order("name").range((page - 1) * PER_PAGE, page * PER_PAGE - 1);
-  const rows = (data ?? []) as Row[];
+  const filter = sp.filter === "in" || sp.filter === "out" || sp.filter === "low" ? sp.filter : "";
+  type Part = "in" | "out" | "low";
+  // PostgREST filter text for one part (same filters for the count and the page)
+  const searchOr = q ? `name.ilike.%${q}%,sku.ilike.%${q}%` : null;
+  const stockRange = (part: Part): [number | null, number | null] => (part === "in" ? [0, null] : part === "out" ? [null, 0] : [0, 5]);
+  const countOf = async (part: Part) => {
+    const [gt, lte] = stockRange(part);
+    let qy = supabase.from("products").select("id", { count: "exact", head: true }).neq("status", "archived");
+    if (searchOr) qy = qy.or(searchOr);
+    if (gt !== null) qy = qy.gt("stock_quantity", gt);
+    if (lte !== null) qy = qy.lte("stock_quantity", lte);
+    return (await qy).count ?? 0;
+  };
+  const fetchPart = async (part: Part, from: number, to: number) => {
+    const [gt, lte] = stockRange(part);
+    let qy = supabase.from("products").select(INVENTORY_SELECT).neq("status", "archived");
+    if (searchOr) qy = qy.or(searchOr);
+    if (gt !== null) qy = qy.gt("stock_quantity", gt);
+    if (lte !== null) qy = qy.lte("stock_quantity", lte);
+    const ordered = part === "out" ? qy.order("stock_quantity", { ascending: false }).order("name") : qy.order("name");
+    return ((await ordered.range(from, to)).data ?? []) as unknown as Row[];
+  };
+  const from = (page - 1) * PER_PAGE;
+  const to = page * PER_PAGE - 1;
+  let rows: Row[];
+  let count: number;
+  if (filter) {
+    // one part only: count and page together
+    [count, rows] = await Promise.all([countOf(filter), fetchPart(filter, from, to)]);
+  } else {
+    const [inCount, outCount] = await Promise.all([countOf("in"), countOf("out")]);
+    count = inCount + outCount;
+    const [inRows, outRows] = await Promise.all([
+      from < inCount ? fetchPart("in", from, Math.min(to, inCount - 1)) : Promise.resolve([] as Row[]),
+      to >= inCount && outCount > 0 ? fetchPart("out", Math.max(0, from - inCount), to - inCount) : Promise.resolve([] as Row[]),
+    ]);
+    rows = [...inRows, ...outRows];
+  }
 
   const { data: history } = await supabase
     .from("inventory")
@@ -108,10 +140,11 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         </label>
         <label className="flex flex-col gap-1 text-xs font-medium text-ink-soft">
           Show
-          <Select name="filter" defaultValue={sp.filter ?? ""} className="h-10">
+          <Select name="filter" defaultValue={filter} className="h-10">
             <option value="">All products</option>
-            <option value="low">Low stock (1–5)</option>
+            <option value="in">In stock</option>
             <option value="out">Out of stock</option>
+            {filter === "low" ? <option value="low">Low stock (1–5)</option> : null}
           </Select>
         </label>
       </AdminFilterBar>
