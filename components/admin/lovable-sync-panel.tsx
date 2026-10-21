@@ -2,8 +2,9 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { RefreshCw, PlugZap, FlaskConical } from "lucide-react";
-import { checkLovableConnectionAction, syncLovableStockAction } from "@/app/admin/(panel)/inventory/lovable-actions";
+import { RefreshCw, PlugZap, FlaskConical, Eye } from "lucide-react";
+import { checkLovableConnectionAction, previewLovableStockAction, syncLovableStockAction } from "@/app/admin/(panel)/inventory/lovable-actions";
+import type { PreviewRow } from "@/lib/integrations/lovable-inventory";
 import { toastResult } from "@/components/admin/ui";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/misc";
@@ -74,6 +75,15 @@ export function LovableSyncPanel({ view }: { view: LovableSyncView }) {
       setResult({ ok: res.ok, message: res.message ?? "" });
       router.refresh();
     });
+  const [previewPage, setPreviewPage] = useState(1);
+  const [preview, setPreview] = useState<{ page: number; rows: PreviewRow[]; total: number | null } | null>(null);
+  const runPreview = () =>
+    start(async () => {
+      const res = await previewLovableStockAction(previewPage);
+      toastResult({ ok: res.ok, message: res.message });
+      setResult({ ok: res.ok, message: res.message ?? "" });
+      if (res.ok && res.data) setPreview({ page: res.data.page, rows: res.data.rows, total: res.data.meta.total });
+    });
   const s = view.summary;
   const c = view.contract;
   const disabled = pending || !view.configured || view.migrationMissing;
@@ -90,10 +100,35 @@ export function LovableSyncPanel({ view }: { view: LovableSyncView }) {
           <Button type="button" size="sm" variant="outline" disabled={disabled} loading={pending} onClick={() => run(() => checkLovableConnectionAction())}>
             <PlugZap className="h-4 w-4" aria-hidden /> Check connection
           </Button>
-          <Button type="button" size="sm" variant="outline" disabled={disabled || !c.checked_at} loading={pending} onClick={() => run(() => syncLovableStockAction("test"))}>
-            <FlaskConical className="h-4 w-4" aria-hidden /> Test first 5
+          <span className="flex items-center gap-1">
+            <label htmlFor="lovable-preview-page" className="sr-only">
+              Preview page
+            </label>
+            <input
+              id="lovable-preview-page"
+              type="number"
+              min={1}
+              value={previewPage}
+              onChange={(e) => setPreviewPage(Math.max(1, Math.trunc(Number(e.target.value) || 1)))}
+              className="h-8 w-16 rounded-md border border-line bg-surface px-2 text-sm"
+              title="Page to preview (10 records per page)"
+            />
+            <Button type="button" size="sm" variant="outline" disabled={pending || !view.configured} loading={pending} onClick={runPreview}>
+              <Eye className="h-4 w-4" aria-hidden /> Preview 10 (no changes)
+            </Button>
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={disabled || !c.checked_at || !preview}
+            loading={pending}
+            title={!preview ? "Run a preview first" : "Imports the first 5 records for real (new ones as drafts)"}
+            onClick={() => run(() => syncLovableStockAction("test"))}
+          >
+            <FlaskConical className="h-4 w-4" aria-hidden /> Import first 5
           </Button>
-          <Button type="button" size="sm" disabled={disabled || !c.checked_at} loading={pending} onClick={() => run(() => syncLovableStockAction("auto"))}>
+          <Button type="button" size="sm" disabled={disabled || !c.checked_at || !preview} title={!preview ? "Run a preview first" : undefined} loading={pending} onClick={() => run(() => syncLovableStockAction("auto"))}>
             <RefreshCw className="h-4 w-4" aria-hidden /> {view.resumePage ? `Continue sync (page ${view.resumePage})` : "Sync Lovable Stock Now"}
           </Button>
         </span>
@@ -120,6 +155,58 @@ export function LovableSyncPanel({ view }: { view: LovableSyncView }) {
         <p className={`mt-3 rounded-lg p-3 text-sm ${result.ok ? "bg-signal-tint text-signal-dark" : "bg-deal-tint text-deal"}`} role={result.ok ? "status" : "alert"}>
           {result.message}
         </p>
+      ) : null}
+
+      {preview ? (
+        <details className="mt-4" open>
+          <summary className="cursor-pointer text-sm font-semibold">
+            Preview — page {preview.page}
+            {preview.total !== null ? ` of ${Math.max(1, Math.ceil(preview.total / 10))} (${preview.total} records)` : ""} · nothing saved
+          </summary>
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-ink-mute">
+                  <th className="py-1 pr-3 font-medium">Source record</th>
+                  <th className="py-1 pr-3 font-medium">Product name (proposed)</th>
+                  <th className="py-1 pr-3 font-medium">Brand · model</th>
+                  <th className="py-1 pr-3 font-medium">RAM / ROM</th>
+                  <th className="py-1 pr-3 font-medium">Condition</th>
+                  <th className="py-1 pr-3 font-medium">Colour</th>
+                  <th className="py-1 pr-3 font-medium">Stock</th>
+                  <th className="py-1 font-medium">Source price (reference)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.rows.map((r, i) => (
+                  <tr key={r.id ?? i} className="border-t border-line align-top">
+                    <td className="py-1 pr-3 text-ink-soft [overflow-wrap:anywhere]">
+                      {Object.entries(r.source)
+                        .filter(([k]) => !["id", "created_at", "updated_at"].includes(k))
+                        .map(([k, v]) => `${k}: ${v || "—"}`)
+                        .join(" · ")}
+                    </td>
+                    {r.proposed ? (
+                      <>
+                        <td className="py-1 pr-3 font-semibold">{r.proposed.name}</td>
+                        <td className="py-1 pr-3">{[r.proposed.brand, r.proposed.model].filter(Boolean).join(" · ") || "—"}</td>
+                        <td className="py-1 pr-3">{[r.proposed.ram, r.proposed.storage].filter(Boolean).join(" / ") || "—"}</td>
+                        <td className="py-1 pr-3">{r.proposed.condition ?? "not given (saved as New)"}</td>
+                        <td className="py-1 pr-3">{r.proposed.color ?? "—"}</td>
+                        <td className="py-1 pr-3">{r.proposed.quantity}</td>
+                        <td className="py-1">{r.proposed.sale_price ?? "—"}</td>
+                      </>
+                    ) : (
+                      <td colSpan={7} className="py-1 text-deal">
+                        Would fail: {r.error}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
       ) : null}
 
       <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">

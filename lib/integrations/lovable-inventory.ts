@@ -507,3 +507,50 @@ export async function checkLovableConnection(deps: { db?: Db | null; fetchImpl?:
   }
   return { ok: true as const, message: contract.firstItemUsable || contract.itemCount === 0 ? "Connected." : `Connected, but the first record can't be imported: ${contract.firstItemError}.`, contract, incremental };
 }
+
+// ---------------------------------------------------------------------------
+// Preview (read-only): shows how source records would be mapped. No database access.
+// ---------------------------------------------------------------------------
+
+export const PREVIEW_SIZE = 10;
+
+export interface PreviewRow {
+  id: string | null;
+  /** Source values as received (purchase / cost fields are never read). */
+  source: Record<string, string>;
+  /** What the import would receive, or null when the record would fail. */
+  proposed: Omit<MappedItem["item"], "id" | "notes" | "removed" | "model_number" | "sku"> | null;
+  error: string | null;
+}
+
+function harmlessSource(r: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(r)) {
+    if (NEVER_READ.test(k)) continue;
+    out[k] = v === null || v === undefined ? "" : typeof v === "object" ? (Array.isArray(v) ? `array(${v.length})` : "object") : String(v).slice(0, 120);
+  }
+  return out;
+}
+
+export async function previewLovableInventory(
+  page: number,
+  deps: { fetchImpl?: FetchLike; env?: Record<string, string | undefined> } = {},
+): Promise<{ ok: true; rows: PreviewRow[]; meta: PageMeta; page: number } | { ok: false; message: string }> {
+  const cfg = lovableConfig(deps.env);
+  if (!cfg.ok) return { ok: false, message: cfg.message };
+  const p = Number.isInteger(page) && page >= 1 && page <= 100_000 ? page : 1;
+  const res = await fetchInventoryPage(cfg.config, { page: p, perPage: PREVIEW_SIZE }, deps.fetchImpl);
+  if (!res.ok) return { ok: false, message: res.message };
+  const rows: PreviewRow[] = res.items.slice(0, PREVIEW_SIZE).map((raw) => {
+    const r = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+    const m = mapInventoryItem(raw);
+    if (!m.ok) return { id: m.id, source: harmlessSource(r), proposed: null, error: m.error };
+    const { id, notes: _n, removed: _r, model_number: _mn, sku: _s, ...proposed } = m.value.item;
+    void _n;
+    void _r;
+    void _mn;
+    void _s;
+    return { id, source: harmlessSource(r), proposed, error: null };
+  });
+  return { ok: true, rows, meta: res.meta, page: p };
+}
