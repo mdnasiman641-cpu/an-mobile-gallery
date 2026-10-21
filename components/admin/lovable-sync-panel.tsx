@@ -188,7 +188,10 @@ export function LovableSyncPanel({ view }: { view: LovableSyncView }) {
                     </td>
                     {r.proposed ? (
                       <>
-                        <td className="py-1 pr-3 font-semibold">{r.proposed.name}</td>
+                        <td className="py-1 pr-3">
+                          <span className="font-semibold">{r.proposed.name}</span>
+                          {r.nameRule ? <span className="block text-ink-mute">from {r.nameRule}</span> : null}
+                        </td>
                         <td className="py-1 pr-3">{[r.proposed.brand, r.proposed.model].filter(Boolean).join(" · ") || "—"}</td>
                         <td className="py-1 pr-3">{[r.proposed.ram, r.proposed.storage].filter(Boolean).join(" / ") || "—"}</td>
                         <td className="py-1 pr-3">{r.proposed.condition ?? "not given (saved as New)"}</td>

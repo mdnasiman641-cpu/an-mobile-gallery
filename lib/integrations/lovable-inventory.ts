@@ -30,6 +30,12 @@ const LOCK_TTL_MS = 5 * 60_000;
 /** Incremental sync looks back a little before the last run, so nothing is missed at the boundary. */
 const CHECKPOINT_OVERLAP_MS = 10 * 60_000;
 const MAX_BODY_CHARS = 5_000_000;
+/**
+ * Version of the field mapping. A checkpoint made under another version is ignored
+ * (the next sync reads every page again), so records that failed under an older
+ * mapping are not skipped by an incremental sync.
+ */
+export const MAPPING_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // Configuration (server only; the key never leaves this module)
@@ -193,6 +199,90 @@ const str = (v: unknown, max = 200): string | null => {
 export interface MappedItem {
   item: StockItem & { image_url: string | null };
   sourceUpdatedAt: string | null;
+  /** How the product name was obtained (shown in the preview). */
+  nameRule: "name field" | "brand + model" | "model only";
+}
+
+// ---------------------------------------------------------------------------
+// Lovable inventory semantics (verified against the live API on 2026-10-21, 187 records):
+//   * there is no name field; the item is described by `brand` + `model`
+//     (brand "Redmi", model "15C"; brand "Techno Spark", model "Go 3")
+//   * older records carry RAM/ROM and the purchase date in the brand label:
+//     "Redmi 4/64 30/05/26" = brand Redmi, 4GB RAM / 64GB ROM, bought 30/05/26
+//   * `category` holds the condition: "new", "used" or "exchange" (a trade-in, i.e. used)
+//   * `ram` / `rom` are plain numbers ("4", "64") or with units ("6GB", "128 GB")
+// ---------------------------------------------------------------------------
+
+const DATE_IN_LABEL = /\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b/g;
+/** "4/64", "6/128", "12/512": RAM (GB) / ROM (GB). ROM must be a real storage size, so dates and fractions don't match. */
+const MEMORY_IN_LABEL = /\b(\d{1,2})\s*\/\s*(16|32|64|128|256|512|1024)\b/;
+const squash = (v: string) => v.replace(/\s+/g, " ").trim();
+
+/** Brand label → clean brand text plus any RAM/ROM written in it. The purchase date is dropped (not needed on the website). */
+export function parseBrandLabel(label: string | null): { brand: string | null; ram: string | null; storage: string | null } {
+  if (!label) return { brand: null, ram: null, storage: null };
+  let rest = label.replace(DATE_IN_LABEL, " ");
+  let ram: string | null = null;
+  let storage: string | null = null;
+  const mem = MEMORY_IN_LABEL.exec(rest);
+  if (mem) {
+    ram = `${mem[1]}GB`;
+    storage = `${mem[2]}GB`;
+    rest = rest.replace(mem[0], " ");
+  }
+  const brand = squash(rest.replace(/[,;|]+/g, " "));
+  return { brand: brand.length ? brand.slice(0, 80) : null, ram, storage };
+}
+
+/** The source's condition, from a condition field or (Lovable) the category field. */
+const CONDITION_WORDS: Record<string, StockItem["condition"]> = {
+  new: "new",
+  intact: "new",
+  used: "used",
+  "pre-owned": "used",
+  preowned: "used",
+  "pre owned": "used",
+  "second hand": "used",
+  exchange: "used",
+  refurbished: "refurbished",
+};
+const conditionWord = (v: string | null): StockItem["condition"] | undefined => (v ? CONDITION_WORDS[v.trim().toLowerCase()] : undefined);
+
+/**
+ * Product name when the source has no name field: brand + model, without repeating
+ * words ("Redmi Note" + "Note 15" → "Redmi Note 15"; "Oppo" + "Oppo A6s" → "Oppo A6s"),
+ * plus RAM/ROM so different variants stay apart ("Redmi 15C 6GB/128GB").
+ */
+export function buildProductName(brand: string | null, model: string | null, ram: string | null, storage: string | null): string | null {
+  const b = brand ? squash(brand) : "";
+  const m = model ? squash(model) : "";
+  let core: string;
+  if (b && m) {
+    const bl = b.toLowerCase();
+    const ml = m.toLowerCase();
+    if (ml === bl || ml.startsWith(`${bl} `)) core = m;
+    else if (bl.endsWith(` ${ml}`) || bl === ml) core = b;
+    else {
+      // overlap: last words of the brand = first words of the model
+      const bw = b.split(" ");
+      const mw = m.split(" ");
+      let overlap = 0;
+      for (let k = Math.min(bw.length, mw.length); k > 0; k--) {
+        if (bw.slice(-k).join(" ").toLowerCase() === mw.slice(0, k).join(" ").toLowerCase()) {
+          overlap = k;
+          break;
+        }
+      }
+      core = [...bw, ...mw.slice(overlap)].join(" ");
+    }
+  } else core = b || m;
+  // a name needs at least two characters and one letter ("X05" is fine, "9" or "4/64" is not)
+  if (core.length < 2 || !/\p{L}/u.test(core)) return null;
+  // RAM/ROM keeps variants apart ("Redmi 15C 6GB/128GB" vs "… 8GB/256GB"); not added twice
+  const memory = ram && storage ? `${ram}/${storage}` : storage;
+  const already = storage !== null && core.toLowerCase().replace(/\s+/g, "").includes(storage.toLowerCase());
+  const name = memory && !already ? `${core} ${memory}` : core;
+  return name.slice(0, 200);
 }
 
 /** One source record → the existing import's item. Returns an error text for unusable records. */
@@ -200,9 +290,16 @@ export function mapInventoryItem(raw: unknown): { ok: true; value: MappedItem } 
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, id: null, error: "Not an object" };
   const r = raw as Record<string, unknown>;
   const id = str(pickField(r, "id").value, 200);
-  const name = str(pickField(r, "name").value, 200);
   if (!id) return { ok: false, id: null, error: "Missing product id" };
-  if (!name || name.length < 2) return { ok: false, id, error: "Missing product name" };
+  const label = parseBrandLabel(str(pickField(r, "brand").value, 200));
+  const model = str(pickField(r, "model").value, 120);
+  const ram = normalizeMemory(pickField(r, "ram").value) ?? label.ram;
+  const storage = normalizeMemory(pickField(r, "storage").value) ?? label.storage;
+  // name: a name field when the source has one; otherwise brand + model (+ RAM/ROM)
+  const nameField = str(pickField(r, "name").value, 200);
+  const nameRule: MappedItem["nameRule"] = nameField && nameField.length >= 2 ? "name field" : label.brand ? "brand + model" : "model only";
+  const name = nameRule === "name field" ? nameField : buildProductName(label.brand, model, ram, storage);
+  if (!name) return { ok: false, id, error: "Missing product name (no name field, and brand + model don't form a name)" };
   const qtyRaw = num(pickField(r, "quantity").value);
   if (qtyRaw === null) return { ok: false, id, error: "Missing or invalid stock quantity" };
   const priceRaw = num(pickField(r, "sale_price").value);
@@ -210,26 +307,35 @@ export function mapInventoryItem(raw: unknown): { ok: true; value: MappedItem } 
   const imageCandidate = Array.isArray(img) ? (typeof img[0] === "string" ? img[0] : str((img[0] as { url?: unknown })?.url, 1000)) : str(img, 1000);
   const updated = str(pickField(r, "updated_at").value, 60);
   const updatedIso = updated && !Number.isNaN(Date.parse(updated)) ? new Date(updated).toISOString() : null;
-  // condition: the source's condition field, else an is_used flag, else the product name ("… Used")
+  // condition: the source's condition field, else a category that holds a condition word
+  // (Lovable: new / used / exchange), else an is_used flag, else the product name ("… Used")
   const conditionRaw = pickField(r, "condition").value;
+  const categoryText = str(pickField(r, "category").value, 80);
+  const categoryCondition = conditionWord(categoryText);
   const isUsedFlag = typeof r.is_used === "boolean" ? (r.is_used ? "used" : "new") : null;
-  const condition = (typeof conditionRaw === "boolean" ? null : normalizeCondition(conditionRaw)) ?? isUsedFlag ?? conditionFromName(name);
+  const condition =
+    (typeof conditionRaw === "boolean" ? null : (conditionWord(str(conditionRaw, 40)) ?? normalizeCondition(conditionRaw))) ??
+    categoryCondition ??
+    isUsedFlag ??
+    conditionFromName(name);
   return {
     ok: true,
     value: {
       sourceUpdatedAt: updatedIso,
+      nameRule,
       item: {
         id,
         name,
-        brand: str(pickField(r, "brand").value, 80),
-        model: str(pickField(r, "model").value, 120),
+        brand: label.brand,
+        model,
         model_number: str(pickField(r, "model_number").value, 80),
         sku: str(pickField(r, "sku").value, 80),
-        ram: normalizeMemory(pickField(r, "ram").value),
-        storage: normalizeMemory(pickField(r, "storage").value),
+        ram,
+        storage,
         condition,
         color: str(pickField(r, "color").value, 60),
-        category: str(pickField(r, "category").value, 80),
+        // a category that only says new / used is the condition, not a website category
+        category: categoryCondition !== undefined ? null : categoryText,
         quantity: Math.max(0, Math.min(100_000, Math.trunc(qtyRaw))),
         sale_price: priceRaw !== null && priceRaw >= 0 ? priceRaw : null,
         notes: null,
@@ -245,7 +351,12 @@ export function describeContract(page: Extract<PageResult, { ok: true }>) {
   const first = page.items[0];
   const keys = first && typeof first === "object" && !Array.isArray(first) ? Object.keys(first as object) : [];
   const r = (first ?? {}) as Record<string, unknown>;
-  const mapping = Object.fromEntries((Object.keys(FIELD_ALIASES) as FieldName[]).map((f) => [f, pickField(r, f).key]));
+  const mapping: Record<string, string | null> = Object.fromEntries((Object.keys(FIELD_ALIASES) as FieldName[]).map((f) => [f, pickField(r, f).key]));
+  if (!mapping.name && (mapping.brand || mapping.model)) mapping.name = `${[mapping.brand, mapping.model].filter(Boolean).join(" + ")} (built)`;
+  if (!mapping.condition && mapping.category && conditionWord(str(r[mapping.category], 80)) !== undefined) {
+    mapping.condition = `${mapping.category} (new / used / exchange)`;
+    mapping.category = null;
+  }
   const sample: Record<string, string> = {};
   for (const k of keys) {
     if (NEVER_READ.test(k)) {
@@ -392,7 +503,11 @@ export async function runLovableSync(
     return { ok: false, message: (e as Error).message };
   }
 
-  const incremental = mode === "auto" && !state?.resume_page && Boolean(state?.checkpoint) && state?.incremental_supported === true;
+  // stored with each run: the mapping version the checkpoint was made with, and failures so far in an unfinished full pass
+  const prev = (state?.last_summary && typeof state.last_summary === "object" ? state.last_summary : {}) as { mappingVersion?: unknown; passFailed?: unknown };
+  const prevVersion = typeof prev.mappingVersion === "number" ? prev.mappingVersion : null;
+  const incremental =
+    mode === "auto" && !state?.resume_page && Boolean(state?.checkpoint) && state?.incremental_supported === true && prevVersion === MAPPING_VERSION;
   const summary: RunSummary = {
     mode: mode === "test" ? "test" : incremental ? "incremental" : "full",
     pages: 0,
@@ -460,17 +575,28 @@ export async function runLovableSync(
   const at = new Date(now()).toISOString();
   const { changedProductIds: _ids, ...stored } = summary;
   void _ids;
-  const patch: Record<string, unknown> = {
-    last_summary: { ...stored, at },
-    last_error: failure ? failure.slice(0, 500) : null,
-  };
+  // records that failed anywhere in this full pass (earlier clicks of the same pass included)
+  const priorPassFailed = summary.mode === "full" && startPage > 1 && typeof prev.passFailed === "number" ? prev.passFailed : 0;
+  const passFailed = summary.mode === "full" ? priorPassFailed + summary.failed : 0;
+  let version: number | null = prevVersion;
+  const patch: Record<string, unknown> = { last_error: failure ? failure.slice(0, 500) : null };
   if (mode !== "test") {
     if (ok && summary.finished) {
-      // whole pass done: move the checkpoint (never past the start of this pass)
-      patch.checkpoint = new Date(Date.parse(passStartedAt) - CHECKPOINT_OVERLAP_MS).toISOString();
       patch.resume_page = null;
       patch.full_pass_started_at = null;
       patch.last_success_at = at;
+      if (summary.mode === "full" && passFailed === 0) {
+        // whole pass done, every record accepted: move the checkpoint (never past the start of this pass)
+        patch.checkpoint = new Date(Date.parse(passStartedAt) - CHECKPOINT_OVERLAP_MS).toISOString();
+        version = MAPPING_VERSION;
+      } else if (summary.mode === "full") {
+        // some records failed: no checkpoint, so the next sync reads every page again and retries them
+        patch.checkpoint = null;
+        version = null;
+      } else if (summary.failed === 0) {
+        patch.checkpoint = new Date(Date.parse(passStartedAt) - CHECKPOINT_OVERLAP_MS).toISOString();
+      }
+      // incremental with failures: the checkpoint stays where it was, so the failed records are asked for again
     } else if (summary.mode === "full") {
       // keep progress: the next click continues at the page that is not done yet
       patch.resume_page = page;
@@ -478,12 +604,21 @@ export async function runLovableSync(
       if (ok) patch.last_success_at = at;
     }
   }
+  patch.last_summary = {
+    ...stored,
+    at,
+    mappingVersion: version,
+    // a test run must not reset the failure count of an unfinished full pass
+    passFailed: mode === "test" ? (typeof prev.passFailed === "number" ? prev.passFailed : 0) : passFailed,
+  };
   await saveState(db, token, patch);
 
   const counts = `${summary.imported} new, ${summary.updated} updated, ${summary.unchanged} unchanged, ${summary.skipped} skipped, ${summary.failed} failed`;
   if (failure) return { ok: false, summary, message: `${failure} Nothing after that point was changed${summary.pages ? `; ${summary.pages} page(s) done before it (${counts})` : ""}.` };
   if (mode === "test") return { ok: true, summary, message: `Test with the first ${perPage} records: ${counts}.` };
   if (!summary.finished) return { ok: true, summary, message: `${counts}. More products are waiting — press Sync again to continue from page ${page}.` };
+  if (summary.mode === "full" && passFailed > 0)
+    return { ok: true, summary, message: `Sync complete (all products): ${counts}. ${passFailed} record(s) failed in this pass; the next sync reads every page again and retries them.` };
   return { ok: true, summary, message: `Sync complete (${summary.mode === "incremental" ? "changes since the last sync" : "all products"}): ${counts}.` };
 }
 
@@ -521,6 +656,7 @@ export interface PreviewRow {
   /** What the import would receive, or null when the record would fail. */
   proposed: Omit<MappedItem["item"], "id" | "notes" | "removed" | "model_number" | "sku"> | null;
   error: string | null;
+  nameRule: MappedItem["nameRule"] | null;
 }
 
 function harmlessSource(r: Record<string, unknown>): Record<string, string> {
@@ -544,13 +680,13 @@ export async function previewLovableInventory(
   const rows: PreviewRow[] = res.items.slice(0, PREVIEW_SIZE).map((raw) => {
     const r = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
     const m = mapInventoryItem(raw);
-    if (!m.ok) return { id: m.id, source: harmlessSource(r), proposed: null, error: m.error };
+    if (!m.ok) return { id: m.id, source: harmlessSource(r), proposed: null, error: m.error, nameRule: null };
     const { id, notes: _n, removed: _r, model_number: _mn, sku: _s, ...proposed } = m.value.item;
     void _n;
     void _r;
     void _mn;
     void _s;
-    return { id, source: harmlessSource(r), proposed, error: null };
+    return { id, source: harmlessSource(r), proposed, error: null, nameRule: m.value.nameRule };
   });
   return { ok: true, rows, meta: res.meta, page: p };
 }

@@ -173,12 +173,17 @@ id, never duplicated, new items become **drafts with price 0**, stock is updated
    the pagination fields, every source field name and how it maps (purchase/cost fields are never read or
    shown). It also tests `updated_since`: if a date in the future returns no records, incremental sync is
    marked *verified*; otherwise every sync reads all pages.
-2. **Test first 5** — imports only the first 5 records; does not move the checkpoint.
-3. **Sync Lovable Stock Now** — at most 4 pages × 50 records per click (Cloudflare Workers Free limits).
+2. **Preview 10 (no changes)** — with a page number: reads 10 records and shows, per record, the source
+   values and the proposed name, brand, model, RAM/ROM, condition, colour and stock (or why it would fail).
+   Nothing is written. The two import buttons stay disabled until a preview has been run.
+3. **Import first 5** — imports the first 5 records for real (new ones as drafts); does not move the checkpoint.
+4. **Sync Lovable Stock Now** — at most 4 pages × 50 records per click (Cloudflare Workers Free limits).
    With more records it says "press Sync again to continue from page N" and remembers that page.
    After a complete pass the checkpoint is set to the start of that pass minus 10 minutes; later syncs
    then ask only for `updated_since=<checkpoint>` (when verified). A failure keeps everything already
-   imported, keeps the checkpoint, and the next click retries the failed page.
+   imported, keeps the checkpoint, and the next click retries the failed page. If any record failed during
+   a full pass, no checkpoint is set, so the next sync reads every page again and retries it. A checkpoint
+   made with an older field mapping (`MAPPING_VERSION`) is ignored for the same reason.
 
 Only one sync can run at a time (a lock in `stock_sync_state`, migration 0022; a crashed run's lock
 expires after 5 minutes).
@@ -188,12 +193,33 @@ expires after 5 minutes).
 | Website field | From the Lovable record | When |
 |---|---|---|
 | link (no duplicates) | `id` (also `product_id`, `uuid`) | always |
-| name, model, brand (matched to an existing brand), RAM / storage specs, condition | `product_name`/`name`, `model`, `brand`, `ram`, `rom`/`storage`, `condition` (else an `is_used` flag, else "Used" in the name) | **new drafts only** — later changes mark the AI review "Needs verification", the product is not overwritten |
-| category | `category` matched by name or slug to an **existing** category | new drafts only, never creates categories |
+| name | `name`/`product_name` if the source has one; **Lovable has none**, so: cleaned `brand` + `model` (+ RAM/ROM), see below | **new drafts only** |
+| brand (matched to an existing website brand by exact name) | `brand`, with RAM/ROM and the purchase date removed ("Redmi 4/64 30/05/26" → "Redmi") | new drafts only |
+| model | `model` | new drafts only |
+| RAM / storage specs | `ram`, `rom` (plain numbers get "GB"); if empty, the "4/64" in the brand label | new drafts only |
+| condition | `condition`; Lovable keeps it in `category`: `new` → New, `used` / `exchange` → Used | new drafts only |
+| category | `category` only when it is a real category name (not new/used/exchange), matched to an **existing** category | new drafts only, never creates categories |
 | stock quantity | `stock_quantity` / `quantity` / `stock` | always (products without storage/colour options; others are flagged) |
 | selling price | `selling_price` / `sale_price` / `price` | **reference only** (shown in Admin), never the website price |
-| image | `image_url` | **reference only** (stored with the link); website photos are uploaded in Admin |
+| image | `image_url` / `photo_url` | **reference only** (stored with the link); website photos are uploaded in Admin |
+| colour | `color` | stored with the link (reference) |
+| purchase date | `purchase_date` (and the date in the brand label) | never used |
 | purchase / cost price | — | never read, never stored |
 | website price, discount, photos, description, SEO, status | — | website only |
 
 The exact source field names are confirmed by **Check connection** (shown in the panel) before the first import.
+
+### Product name rule (Lovable)
+
+Verified against the live API (187 records, 2026-10-21): there is no name field. `brand` is usually the
+manufacturer ("Redmi", "Iphone"), sometimes manufacturer + series ("Techno Spark", "Redmi Note"), and in
+older records it also carries RAM/ROM and the purchase date ("Redmi 4/64 30/05/26").
+
+1. Remove the date and the RAM/ROM pair from the brand label.
+2. Name = brand + model, without repeating words: "Redmi Note" + "Note 15" → "Redmi Note 15";
+   "Oppo" + "Oppo A6s" → "Oppo A6s". No brand → the model alone ("X05").
+3. Add RAM/ROM so variants stay apart: "Redmi 15C 6GB/128GB"; storage only (iPhones) → "Iphone 13 128GB".
+   Not added if the text already contains it.
+4. The source's spelling and capitals are kept (no guessing: "Techno" stays "Techno"); edit drafts before publishing.
+5. A record is rejected only when no name can be formed (no name field, and brand + model have no letters
+   or fewer than 2 characters, e.g. a bare "9").
