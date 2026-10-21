@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { requireStaff } from "@/lib/auth";
+import { hasRole, requireStaff } from "@/lib/auth";
+import { LovableSyncPanel, type LovableSyncView } from "@/components/admin/lovable-sync-panel";
+import { lovableConfig, LOVABLE_SOURCE } from "@/lib/integrations/lovable-inventory";
 import { createClient } from "@/lib/supabase/server";
 import { escapeFilter } from "@/services/admin";
 import { AdminFilterBar, AdminPageHeader, adminTable } from "@/components/admin/page-header";
@@ -33,8 +35,30 @@ interface Row {
   product_variants: { id: string; sku: string | null; storage: string | null; ram: string | null; color: string | null; stock: number; status: string }[];
 }
 
+/** Lovable sync status for admins (staff can read the state table; the API key is never read here). */
+async function lovableSyncView(supabase: Awaited<ReturnType<typeof createClient>>): Promise<LovableSyncView> {
+  const cfg = lovableConfig();
+  const { data, error } = await supabase.from("stock_sync_state").select("*").eq("source", LOVABLE_SOURCE).maybeSingle();
+  const row = (data ?? {}) as Record<string, unknown>;
+  const running = typeof row.running_since === "string" && Boolean(row.running_token) && Date.now() - Date.parse(row.running_since) < 5 * 60_000;
+  return {
+    configured: cfg.ok,
+    configProblem: cfg.ok ? null : cfg.message,
+    migrationMissing: Boolean(error),
+    lastSuccessAt: (row.last_success_at as string | null) ?? null,
+    lastAttemptAt: (row.last_attempt_at as string | null) ?? null,
+    lastError: (row.last_error as string | null) ?? null,
+    resumePage: (row.resume_page as number | null) ?? null,
+    incrementalSupported: (row.incremental_supported as boolean | null) ?? null,
+    checkpoint: (row.checkpoint as string | null) ?? null,
+    running,
+    summary: (row.last_summary as LovableSyncView["summary"]) ?? {},
+    contract: (row.contract as LovableSyncView["contract"]) ?? {},
+  };
+}
+
 export default async function InventoryPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
-  await requireStaff("editor");
+  const session = await requireStaff("editor");
   const sp = await searchParams;
   const page = Math.max(1, Number(sp.page) || 1);
   const supabase = await createClient();
@@ -70,6 +94,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   return (
     <>
       <AdminPageHeader title="Inventory" description="Stock levels and every stock movement. Sales and cancellations are recorded automatically." />
+      {hasRole(session, "admin") ? <LovableSyncPanel view={await lovableSyncView(supabase)} /> : null}
       <AdminFilterBar>
         <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs font-medium text-ink-soft">
           Search

@@ -142,3 +142,58 @@ curl -X POST https://<your-domain>/api/integrations/stock/webhook \
 ```
 
 Then open Admin → AI Products. Delete the test draft afterwards.
+
+---
+
+## Lovable inventory API — pull sync ("Sync Lovable Stock Now")
+
+Admin → **Inventory** → *Lovable stock sync* (admins only). It calls the Lovable app's
+`GET /api/public/inventory` **from the server** and feeds the records through the same import as the
+webhook above (`stock_sync_apply`), so all the rules above apply: matched by the source's product
+id, never duplicated, new items become **drafts with price 0**, stock is updated, nothing is ever deleted.
+
+### Configuration (server only)
+
+| Name | Type | Value |
+|---|---|---|
+| `LOVABLE_INVENTORY_API_URL` | Text | `https://khadijatelecom1.lovable.app` (the endpoint path is added on the server) |
+| `LOVABLE_INVENTORY_API_KEY` | **Secret** | the same value as the Lovable secret `AN_MOBILE_INVENTORY_API_KEY` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Secret | already required for imports |
+
+- **Production (Cloudflare):** Workers & Pages → `an-mobile-gallery` → Settings → Variables and Secrets →
+  add the URL as *Text* and the key as *Secret* → then redeploy (or push a commit).
+- **Local development:** put both in `.dev.vars` (not committed). Never in `.env*` files and never with a
+  `NEXT_PUBLIC_` prefix — `npm run cf:build` refuses to build if the key is found in `.env*`.
+- The key is sent only in the `X-API-Key` header, never in a URL, a browser response, a log line or an
+  error message.
+
+### Buttons
+
+1. **Check connection** — reads 2 records and saves the response format: which field holds the list,
+   the pagination fields, every source field name and how it maps (purchase/cost fields are never read or
+   shown). It also tests `updated_since`: if a date in the future returns no records, incremental sync is
+   marked *verified*; otherwise every sync reads all pages.
+2. **Test first 5** — imports only the first 5 records; does not move the checkpoint.
+3. **Sync Lovable Stock Now** — at most 4 pages × 50 records per click (Cloudflare Workers Free limits).
+   With more records it says "press Sync again to continue from page N" and remembers that page.
+   After a complete pass the checkpoint is set to the start of that pass minus 10 minutes; later syncs
+   then ask only for `updated_since=<checkpoint>` (when verified). A failure keeps everything already
+   imported, keeps the checkpoint, and the next click retries the failed page.
+
+Only one sync can run at a time (a lock in `stock_sync_state`, migration 0022; a crashed run's lock
+expires after 5 minutes).
+
+### Field ownership
+
+| Website field | From the Lovable record | When |
+|---|---|---|
+| link (no duplicates) | `id` (also `product_id`, `uuid`) | always |
+| name, model, brand (matched to an existing brand), RAM / storage specs, condition | `product_name`/`name`, `model`, `brand`, `ram`, `rom`/`storage`, `condition` (else an `is_used` flag, else "Used" in the name) | **new drafts only** — later changes mark the AI review "Needs verification", the product is not overwritten |
+| category | `category` matched by name or slug to an **existing** category | new drafts only, never creates categories |
+| stock quantity | `stock_quantity` / `quantity` / `stock` | always (products without storage/colour options; others are flagged) |
+| selling price | `selling_price` / `sale_price` / `price` | **reference only** (shown in Admin), never the website price |
+| image | `image_url` | **reference only** (stored with the link); website photos are uploaded in Admin |
+| purchase / cost price | — | never read, never stored |
+| website price, discount, photos, description, SEO, status | — | website only |
+
+The exact source field names are confirmed by **Check connection** (shown in the panel) before the first import.
