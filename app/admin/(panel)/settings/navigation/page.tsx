@@ -15,7 +15,10 @@ export default async function NavigationSettingsPage() {
     supabase.from("categories").select("id, name, slug, parent_id, is_active").order("sort_order").order("name"),
     supabase.from("brands").select("name, slug, is_featured").eq("is_active", true).order("sort_order").order("name"),
   ]);
-  const migrationMissing = Boolean(navRes.error);
+  // only a missing column / table means the migration is missing; other errors are shown as they are
+  const e = navRes.error;
+  const migrationMissing = Boolean(e && (e.code === "42703" || e.code === "PGRST204" || e.code === "42P01" || e.code === "PGRST205"));
+  const loadError = e && !migrationMissing ? `The saved menu couldn't be loaded (database error ${e.code ?? "unknown"}: ${e.message}).` : null;
   return (
     <>
       <AdminPageHeader
@@ -28,6 +31,11 @@ export default async function NavigationSettingsPage() {
         brands={((brands.data ?? []) as { name: string; slug: string; is_featured: boolean }[])}
         migrationMissing={migrationMissing}
       />
+      {loadError ? (
+        <p className="mt-4 rounded-lg bg-deal-tint p-3 text-sm text-deal" role="alert">
+          {loadError}
+        </p>
+      ) : null}
     </>
   );
 }

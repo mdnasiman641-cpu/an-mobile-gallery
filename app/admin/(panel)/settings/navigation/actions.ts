@@ -13,6 +13,13 @@ import type { ActionResult } from "@/types";
 const MIGRATION =
   "The menu needs database migration 0020 (supabase/migrations/20261021000020_navigation.sql, after 0018). Run it in the Supabase SQL editor first.";
 
+function isMissingSchema(error: { code?: string; message?: string }): boolean {
+  const m = error.message ?? "";
+  if (error.code === "42P01" || error.code === "PGRST205") return /storefront_header/.test(m) || error.code === "PGRST205";
+  if (error.code === "42703" || error.code === "PGRST204") return /\bnav\b/.test(m);
+  return false;
+}
+
 /** Save the menu (publish), or `null` to go back to the built-in menu. Categories and products are never changed here. */
 export async function saveNavigationAction(raw: unknown): Promise<ActionResult<NavConfig | null>> {
   const session = await assertStaff("admin");
@@ -32,8 +39,11 @@ export async function saveNavigationAction(raw: unknown): Promise<ActionResult<N
 
   const { data, error } = await supabase.from("storefront_header").update({ nav, updated_at: new Date().toISOString(), updated_by: session.userId }).eq("id", 1).select("id");
   if (error) {
-    if (/nav|storefront_header/.test(error.message) || error.code === "42703" || error.code === "PGRST204" || error.code === "42P01") return { ok: false, message: MIGRATION };
-    return { ok: false, message: "The menu couldn't be saved. Please try again." };
+    // Only a missing column / table means a migration is missing. Anything else is reported as it is
+    // (admins only; database error texts contain no secrets), so the real cause is never hidden.
+    if (isMissingSchema(error)) return { ok: false, message: MIGRATION };
+    console.error("[navigation] save failed", error.code, error.message);
+    return { ok: false, message: `The menu couldn't be saved (database error ${error.code ?? "unknown"}: ${error.message}).` };
   }
   if (!data?.length) return { ok: false, message: "The menu couldn't be saved (no permission, or migration 0018 not run)." };
 
