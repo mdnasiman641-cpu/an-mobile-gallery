@@ -108,7 +108,7 @@ export function MainNavBar({ items, style, after }: { items: ResolvedNavItem[]; 
                   href={it.href}
                   newTab={it.newTab}
                   className={cn(
-                    "inline-flex h-12 items-center gap-1.5 whitespace-nowrap text-[14px] font-medium text-[var(--nav-text)] hover:text-[var(--nav-hover)] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-white aria-[current=page]:font-semibold aria-[current=page]:text-[var(--nav-active)]",
+                    "inline-flex h-12 items-center gap-1.5 whitespace-nowrap text-[14px] font-medium text-[var(--nav-text)] hover:text-[var(--nav-hover)] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-white aria-[current=page]:font-semibold aria-[current=page]:text-[var(--nav-active)] aria-[current=page]:underline aria-[current=page]:underline-offset-4",
                     pad,
                     it.mega && "bg-black/10 font-semibold hover:bg-black/20",
                   )}

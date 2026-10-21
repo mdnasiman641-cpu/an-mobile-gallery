@@ -65,7 +65,14 @@ export interface NavConfig {
   style: NavStyle;
 }
 
-export const DEFAULT_NAV_STYLE: NavStyle = { bg_color: null, text_color: "#ffffff", hover_color: "#ffffff", active_color: "#fde68a", spacing: "normal" };
+/**
+ * White passes 4.5:1 on both ends of the built-in gradient (5.3:1 and 4.5:1);
+ * the current page is marked with white + bold + underline, not a paler colour.
+ */
+export const DEFAULT_NAV_STYLE: NavStyle = { bg_color: null, text_color: "#ffffff", hover_color: "#ffffff", active_color: "#ffffff", spacing: "normal" };
+
+/** The two ends of the built-in green gradient (contrast is checked against both). */
+export const NAV_GRADIENT = ["#0b7a60", "#0c8667"] as const;
 
 // ---------------------------------------------------------------------------
 // Validation

@@ -16,6 +16,7 @@ import {
   BADGE_STYLE_LABELS,
   CHILD_TYPES,
   DEFAULT_NAV_STYLE,
+  NAV_GRADIENT,
   NAV_ICONS,
   NAV_LIMITS,
   NAV_TYPE_LABELS,
@@ -139,7 +140,19 @@ export function NavigationManager({
     );
   }
 
-  const contrast = draft.style.bg_color ? contrastRatio(draft.style.bg_color, draft.style.text_color) : contrastRatio("#0b7a60", draft.style.text_color);
+  // lowest contrast of each menu colour against the background (both gradient ends for the built-in one)
+  const backgrounds = draft.style.bg_color ? [draft.style.bg_color] : [...NAV_GRADIENT];
+  const hex = (v: string) => /^#[0-9a-f]{6}$/i.test(v);
+  const lowContrast = (
+    [
+      ["Text", draft.style.text_color],
+      ["Hover", draft.style.hover_color],
+      ["Current page", draft.style.active_color],
+    ] as const
+  )
+    .filter(([, c]) => hex(c) && backgrounds.every(hex))
+    .map(([name, c]) => ({ name, ratio: Math.min(...backgrounds.map((b) => contrastRatio(b, c))) }))
+    .filter((x) => x.ratio < 4.5);
 
   const row = (it: NavItem, isChild: boolean) => {
     const kids = isChild ? [] : childrenOf(it.id);
@@ -286,9 +299,10 @@ export function NavigationManager({
             </Select>
           </Field>
         </div>
-        {/^#[0-9a-f]{6}$/i.test(draft.style.text_color) && contrast < 4.5 ? (
+        {lowContrast.length ? (
           <p className="mt-3 rounded-lg bg-warn-tint p-2.5 text-sm text-warn" role="status">
-            Text and background contrast is {contrast.toFixed(1)}:1. Use at least 4.5:1 so the menu is easy to read.
+            Hard to read: {lowContrast.map((x) => `${x.name} colour ${x.ratio.toFixed(1)}:1`).join(", ")}. Use at least 4.5:1 against the background — on the built-in green, white
+            (#ffffff) works; on a custom background, choose a dark background (e.g. #073b30 or #1e293b) with white or light text.
           </p>
         ) : null}
       </section>
