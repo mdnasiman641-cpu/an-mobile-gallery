@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { getSiteUrl } from "@/lib/env";
-import { toPlainText } from "@/lib/utils";
+import { effectivePrice, formatPrice, toPlainText } from "@/lib/utils";
 
 export function absoluteUrl(path = "/"): string {
   if (/^https?:\/\//.test(path)) return path;
@@ -23,6 +23,32 @@ interface ProductSeoInput {
   meta_description?: string | null;
   short_description?: string | null;
   condition?: string;
+  // optional real data for the automatic description (search result snippet)
+  price?: number | null;
+  sale_price?: number | null;
+  stock_quantity?: number | null;
+  status?: string | null;
+  variants?: { price: number; sale_price: number | null; stock: number; status: string }[];
+}
+
+/** Lowest current price, the regular price it replaces (if on sale) and whether anything is in stock. */
+function priceFacts(p: ProductSeoInput): { price: number | null; was: number | null; inStock: boolean | null } {
+  const active = (p.variants ?? []).filter((v) => v.status === "active");
+  const rows = active.length
+    ? active.map((v) => ({ price: Number(v.price), sale: v.sale_price, stock: v.stock }))
+    : p.price !== undefined && p.price !== null
+      ? [{ price: Number(p.price), sale: p.sale_price ?? null, stock: p.stock_quantity ?? null }]
+      : [];
+  const priced = rows.filter((r) => r.price > 0);
+  if (!priced.length) return { price: null, was: null, inStock: null };
+  const best = priced.reduce((a, b) => (effectivePrice(b.price, b.sale) < effectivePrice(a.price, a.sale) ? b : a));
+  const now = effectivePrice(best.price, best.sale);
+  const known = rows.filter((r) => r.stock !== null && r.stock !== undefined);
+  return {
+    price: now,
+    was: now < best.price ? best.price : null,
+    inStock: p.status === "out_of_stock" ? false : known.length ? known.some((r) => Number(r.stock) > 0) : null,
+  };
 }
 
 /**
@@ -37,16 +63,27 @@ export function productSeoTitle(p: ProductSeoInput): string {
 }
 
 /**
- * "Buy Apple iPhone 15 Pro Max 256GB in Bangladesh. Check latest price,
- *  specifications, availability and offers."
+ * The search-result snippet when the admin wrote none. Built only from real product data, most
+ * important first (Google shows about 150 characters): price, condition, stock, then the Bangla
+ * search word "দাম" with the price, e.g.
+ * "Redmi 15C 6GB/128GB price in Bangladesh: ৳15,999. New phone, in stock at AN MOBILE GADGETS.
+ *  Specifications, photos and offers. দাম ৳15,999."
+ * Without a price it falls back to "Buy … in Bangladesh. Check latest price, …".
  */
-export function productSeoDescription(p: ProductSeoInput): string {
+export function productSeoDescription(p: ProductSeoInput, opts: { storeName?: string | null; currencySymbol?: string | null } = {}): string {
   if (p.meta_description?.trim()) return clip(p.meta_description.trim(), 300);
   const usedNote = p.condition === "used" ? " Checked used phone." : p.condition === "refurbished" ? " Refurbished phone." : "";
-  return clip(
-    `Buy ${p.name} in Bangladesh. Check latest price, specifications, availability and offers.${usedNote}`,
-    300,
-  );
+  const facts = priceFacts(p);
+  if (facts.price === null) {
+    return clip(`Buy ${p.name} in Bangladesh. Check latest price, specifications, availability and offers.${usedNote}`, 300);
+  }
+  const symbol = opts.currencySymbol || "৳";
+  const price = formatPrice(facts.price, symbol);
+  const was = facts.was ? ` (was ${formatPrice(facts.was, symbol)})` : "";
+  const kind = p.condition === "used" ? "Checked used phone" : p.condition === "refurbished" ? "Refurbished phone" : "New phone";
+  const stock = facts.inStock === true ? ", in stock" : facts.inStock === false ? ", currently out of stock" : "";
+  const at = opts.storeName?.trim() ? ` at ${opts.storeName.trim()}` : "";
+  return clip(`${p.name} price in Bangladesh: ${price}${was}. ${kind}${stock}${at}. Specifications, photos and offers. দাম ${price}.`, 300);
 }
 
 export function taxonomySeoTitle(kind: "brand" | "category", t: { name: string; meta_title?: string | null }): string {

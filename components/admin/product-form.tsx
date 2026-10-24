@@ -531,7 +531,18 @@ export function ProductForm({
     );
   const panel = (t: Tab) => cn("rounded-b-[var(--radius-card)] border border-t-0 border-line bg-surface p-4 sm:p-6", tab !== t && "hidden");
   const autoTitle = productSeoTitle({ name: v.name || "Product name" });
-  const autoDescription = productSeoDescription({ name: v.name || "Product name", condition: v.condition });
+  const autoDescription = productSeoDescription(
+    {
+      name: v.name || "Product name",
+      condition: v.condition,
+      price: Number(v.price) || null,
+      sale_price: v.sale_price ? Number(v.sale_price) : null,
+      stock_quantity: Number(v.stock_quantity),
+      status: v.status,
+      variants: v.variants.map((x) => ({ price: Number(x.price), sale_price: x.sale_price ? Number(x.sale_price) : null, stock: Number(x.stock), status: x.status })),
+    },
+    { storeName },
+  );
   const topCategories = categories.filter((c) => !c.parent_id);
 
   return (

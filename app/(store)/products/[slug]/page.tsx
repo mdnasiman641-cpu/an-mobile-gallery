@@ -45,9 +45,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const product = await getProductBySlug(slug);
   if (!product) return { title: "Product not found", robots: { index: false } };
+  const settings = await getSiteSettings();
   const meta = buildMetadata({
     title: productSeoTitle(product),
-    description: productSeoDescription(product),
+    description: productSeoDescription(product, { storeName: settings.store_name, currencySymbol: settings.currency_symbol }),
     path: `/products/${product.slug}`,
     image: product.images[0]?.url,
     imageAlt: product.images[0]?.alt_text ?? product.name,
