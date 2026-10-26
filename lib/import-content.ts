@@ -36,6 +36,15 @@ function short(v: string | undefined, max = 60): string | null {
 }
 
 const inches = (v: string | null) => (v ? v.replace(/\s*(inches|inch|in)\b\.?/i, "-inch").replace(/\s+-inch/, "-inch") : null);
+/** "1920x1080" → "1080p", "3840x2160" → "4K". */
+function videoLabel(v: string | null): string | null {
+  if (!v) return null;
+  const m = /(\d{3,4})\s*[x×]\s*(\d{3,4})/.exec(v);
+  if (!m) return v;
+  const h = Math.min(Number(m[1]), Number(m[2]));
+  return h >= 2160 ? "4K" : `${h}p`;
+}
+
 const mp = (v: string | null) => (v ? v.replace(/\s*mp\b/gi, "MP") : null);
 
 export function buildImportContent(input: ImportContentInput): ImportContent | null {
@@ -53,14 +62,26 @@ export function buildImportContent(input: ImportContentInput): ImportContent | n
   const protection = short(get("Screen protection"), 40);
   const chipset = short(get("Chipset"), 50);
   const gpu = short(get("GPU"), 30);
-  const os = short(get("Operating system"), 40);
-  const rear = mp(short(get("Rear camera", "Main camera"), 50));
-  const front = mp(short(get("Front camera"), 30));
-  const video = short(get("Video recording"), 30);
+  // pages differ: "Rear camera: Single" + "Main camera: 13 MP, f/2.2" → "13MP"
+  const camera = (...labels: string[]) => {
+    for (const l of labels) {
+      const m = /\d+(\.\d+)?\s*MP(\s*\+\s*\d+(\.\d+)?\s*MP)*/i.exec(get(l) ?? "");
+      if (m) return mp(m[0].replace(/\s*\+\s*/g, " + "));
+    }
+    return null;
+  };
+  const osRaw = short(get("Operating system", "OS"), 40);
+  const os = osRaw && /[a-z]{3,}/i.test(osRaw) && !/^v?\d/i.test(osRaw) ? osRaw : null;
+  const rear = camera("Rear camera", "Main camera");
+  const front = camera("Front camera", "Selfie camera");
+  const video = videoLabel(short(get("Video recording"), 30));
   const battery = short(get("Battery"), 20);
-  const charging = short(get("Charging"), 30);
-  const network = short(get("Network"), 40);
-  const fingerprint = short(get("Fingerprint sensor"), 40);
+  const charging = short(get("Charging", "Quick Charging", "Fast charging"), 30);
+  const networkRaw = get("Network")?.replace(/\s+/g, " ").trim();
+  const network = networkRaw && networkRaw.length <= 40 ? networkRaw : null;
+  const fpRaw = short(get("Fingerprint sensor"), 40);
+  const fpWhere = short(get("Finger Sensor Position", "Fingerprint position"), 30);
+  const fingerprint = fpRaw && /^yes$/i.test(fpRaw) ? (fpWhere ?? "Yes") : fpRaw;
   const expandable = short(get("Expandable storage"), 50);
 
   const facts = [size || panel, chipset, rear, battery].filter(Boolean).length;
