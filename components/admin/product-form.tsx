@@ -241,22 +241,31 @@ export function ProductForm({
       const room = Math.max(0, 15 - cur.images.length);
       const photos = d.images.filter((u) => !importedPhotosRef.current.has(u)).slice(0, room);
       for (const u of photos) importedPhotosRef.current.add(u);
-      let added = 0;
       setUploading((n) => n + photos.length);
-      for (const [i, url] of photos.entries()) {
-        try {
-          const img = await fetchImportImageAction({ pageUrl: link, imageUrl: url });
-          if (!img.ok || !img.data) continue;
-          const bin = Uint8Array.from(atob(img.data.base64), (c) => c.charCodeAt(0));
-          const up = await uploadImage(new File([bin], img.data.name, { type: img.data.type }), "products");
-          const alt = `${d.name ?? cur.name ?? "Phone"}${photos.length > 1 ? ` – photo ${i + 1}` : ""}`.slice(0, 200);
-          setV((prev) => ({ ...prev, images: [...prev.images, { key: newKey(), url: up.url, storage_path: up.path, alt_text: alt, width: up.width, height: up.height }] }));
-          added += 1;
-        } catch {
-          // a photo that can't be read is skipped
-        } finally {
-          setUploading((n) => n - 1);
-        }
+      setImportNote({ ok: true, text: `Imported the details from ${d.sourceHost}; adding ${photos.length} photo${photos.length === 1 ? "" : "s"}…` });
+      // all photos at once (each: download on the server, resize in the browser, upload); kept in page order
+      const uploaded = await Promise.all(
+        photos.map(async (url) => {
+          try {
+            const img = await fetchImportImageAction({ pageUrl: link, imageUrl: url });
+            if (!img.ok || !img.data) return null;
+            const bin = Uint8Array.from(atob(img.data.base64), (c) => c.charCodeAt(0));
+            return await uploadImage(new File([bin], img.data.name, { type: img.data.type }), "products");
+          } catch {
+            return null; // a photo that can't be read is skipped
+          } finally {
+            setUploading((n) => n - 1);
+          }
+        }),
+      );
+      const ok = uploaded.filter((u): u is NonNullable<typeof u> => u !== null);
+      const added = ok.length;
+      if (added) {
+        const base = (d.name ?? cur.name ?? "Phone").slice(0, 180);
+        setV((prev) => ({
+          ...prev,
+          images: [...prev.images, ...ok.map((up, i) => ({ key: newKey(), url: up.url, storage_path: up.path, alt_text: added > 1 ? `${base} – photo ${i + 1}` : base, width: up.width, height: up.height }))],
+        }));
       }
       if (added) filled.push(`${added} photo${added === 1 ? "" : "s"}`);
       const ref = d.referencePrice ? ` Their listed price was ${formatPrice(d.referencePrice)} (not copied — enter your own selling price).` : "";
@@ -267,7 +276,7 @@ export function ProductForm({
         text: `${filled.length ? `Imported from ${d.sourceHost}: ${filled.join(", ")}.` : "Nothing new to add: the fields were already filled."}${ref} ${
           needsMemory
             ? `Enter the RAM and storage of your phone${versions ? ` (this model comes as ${versions})` : ""}: AI then writes the description and SEO by itself.`
-            : "AI is writing the description and SEO now — review them, enter your selling price and save."
+            : "AI writes the description and SEO by itself (status below) — review them, enter your selling price and save."
         }`,
       });
     } catch {
