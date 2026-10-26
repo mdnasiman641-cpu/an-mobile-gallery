@@ -95,7 +95,9 @@ export default async function AiProductsPage({ searchParams }: { searchParams: P
     .filter((r) => r.product)
     .map((r) => ({ ...r, queue: (r.product!.status === "active" || r.product!.status === "out_of_stock" ? "published" : r.review_status) as QueueStatus }));
   const counts = rows.reduce<Record<string, number>>((acc, r) => ({ ...acc, [r.queue]: (acc[r.queue] ?? 0) + 1 }), {});
-  const shown = filter && filter in STATUS_LABEL ? rows.filter((r) => r.queue === filter) : rows;
+  const filtered = filter && filter in STATUS_LABEL ? rows.filter((r) => r.queue === filter) : rows;
+  // in stock first (most recently updated first within each part); sold-out products always last
+  const shown = [...filtered].sort((a, b) => Number((b.product?.stock_quantity ?? 0) > 0) - Number((a.product?.stock_quantity ?? 0) > 0));
   const jobs = (jobsRes.data as unknown as JobRow[]) ?? [];
   const latestJob = new Map<string, JobRow>();
   for (const j of jobs) if (!latestJob.has(j.product_id)) latestJob.set(j.product_id, j);

@@ -26,30 +26,61 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
   const q = escapeFilter(sp.q ?? "");
   const sort = sp.sort ?? "updated";
 
-  const list = (columns: string) => {
-    let query = supabase.from("products").select(columns, { count: "exact" });
-    if (q) query = query.or(`name.ilike.%${q}%,sku.ilike.%${q}%,model.ilike.%${q}%`);
-    if (sp.status) query = query.eq("status", sp.status);
-    if (sp.brand) query = query.eq("brand_id", sp.brand);
-    if (sp.category) query = query.eq("category_id", sp.category);
-    if (sp.stock === "out") query = query.lte("stock_quantity", 0);
-    if (sp.stock === "low") query = query.gt("stock_quantity", 0).lte("stock_quantity", 3);
-    if (sp.demo === "1") query = query.eq("is_demo", true);
-    if (sp.demo === "0") query = query.eq("is_demo", false);
-    query =
+  // In-stock products always come first (in the chosen order), out-of-stock ones after them.
+  // Both parts are counted and paged in the database, so only one page is fetched.
+  type Part = "in" | "out" | null;
+  // the few query methods used here (keeps the type checker from expanding the full builder type)
+  interface Q extends PromiseLike<{ data: unknown[] | null; count: number | null; error: { message: string } | null }> {
+    or(f: string): Q;
+    eq(c: string, v: string | boolean): Q;
+    gt(c: string, v: number): Q;
+    lte(c: string, v: number): Q;
+    order(c: string, o?: { ascending?: boolean }): Q;
+    range(a: number, b: number): Q;
+  }
+  const filtered = (query: Q, part: Part): Q => {
+    let r = query;
+    if (q) r = r.or(`name.ilike.%${q}%,sku.ilike.%${q}%,model.ilike.%${q}%`);
+    if (sp.status) r = r.eq("status", sp.status);
+    if (sp.brand) r = r.eq("brand_id", sp.brand);
+    if (sp.category) r = r.eq("category_id", sp.category);
+    if (sp.stock === "out") r = r.lte("stock_quantity", 0);
+    if (sp.stock === "low") r = r.gt("stock_quantity", 0).lte("stock_quantity", 3);
+    if (sp.demo === "1") r = r.eq("is_demo", true);
+    if (sp.demo === "0") r = r.eq("is_demo", false);
+    if (part === "in") r = r.gt("stock_quantity", 0);
+    if (part === "out") r = r.lte("stock_quantity", 0);
+    return r;
+  };
+  const list = (columns: string, part: Part, from: number, to: number) => {
+    const query = filtered(supabase.from("products").select(columns, { count: "exact" }) as unknown as Q, part);
+    const ordered =
       sort === "name"
         ? query.order("name")
         : sort === "stock"
-          ? query.order("stock_quantity")
+          ? query.order("stock_quantity").order("name")
           : sort === "price"
             ? query.order("price")
             : query.order("updated_at", { ascending: false });
-    return query.range((page - 1) * PER_PAGE, page * PER_PAGE - 1);
+    return ordered.range(from, to);
   };
+  const countOf = async (part: Part) => (await filtered(supabase.from("products").select("id", { count: "exact", head: true }) as unknown as Q, part)).count ?? 0;
 
+  const from = (page - 1) * PER_PAGE;
+  const to = page * PER_PAGE - 1;
   // box_included exists once migration 0017 has run; until then the list loads without it.
-  let res = await list(`${LIST_COLUMNS}, box_included`);
-  if (res.error && /box_included/.test(res.error.message)) res = await list(LIST_COLUMNS);
+  const load = async (columns: string) => {
+    if (sp.stock === "out" || sp.stock === "low") return list(columns, null, from, to);
+    const [inCount, outCount] = await Promise.all([countOf("in"), countOf("out")]);
+    const [a, b] = await Promise.all([
+      from < inCount ? list(columns, "in", from, Math.min(to, inCount - 1)) : null,
+      to >= inCount && outCount > 0 ? list(columns, "out", Math.max(0, from - inCount), to - inCount) : null,
+    ]);
+    const error = a?.error ?? b?.error ?? null;
+    return { data: [...((a?.data ?? []) as unknown[]), ...((b?.data ?? []) as unknown[])], count: inCount + outCount, error };
+  };
+  let res = await load(`${LIST_COLUMNS}, box_included`);
+  if (res.error && /box_included/.test(res.error.message)) res = await load(LIST_COLUMNS);
   const { data, count, error } = res;
 
   const rows: AdminProductRow[] = ((data ?? []) as unknown as (Omit<AdminProductRow, "image" | "variant_count"> & {
@@ -129,7 +160,7 @@ export default async function AdminProductsPage({ searchParams }: { searchParams
           <Select name="sort" defaultValue={sort} className="h-10">
             <option value="updated">Recently updated</option>
             <option value="name">Name</option>
-            <option value="stock">Lowest stock</option>
+            <option value="stock">Lowest stock (sold out last)</option>
             <option value="price">Lowest price</option>
           </Select>
         </label>

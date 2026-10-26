@@ -7,6 +7,7 @@ import { ArrowDown, ArrowUp, Copy, ExternalLink, ImagePlus, Plus, Star, Trash2 }
 import { toast } from "sonner";
 import { saveProductAction, duplicateProductAction, deleteProductAction } from "@/app/admin/(panel)/products/actions";
 import { cancelProductAiAction, completeProductWithAiAction } from "@/app/admin/(panel)/products/ai-actions";
+import { fetchImportImageAction, importProductFromUrlAction } from "@/app/admin/(panel)/products/import-actions";
 import { AiTag, ProductAiPanel, type AiPhase, type ReviewItem } from "@/components/admin/product-ai-panel";
 import { AiAssistant, ImproveContentButton, type AssistantProps } from "@/components/admin/ai-assistant";
 import { SpecEditor } from "@/components/admin/spec-editor";
@@ -166,6 +167,76 @@ export function ProductForm({
       }
     }
     if (fileRef.current) fileRef.current.value = "";
+  }
+
+  // ---------------------------------------------------------------- import from a link
+  const [importing, setImporting] = useState(false);
+  const [importNote, setImportNote] = useState<{ ok: boolean; text: string } | null>(null);
+  async function importFromLink(link: string) {
+    if (importing) return;
+    setImporting(true);
+    setImportNote(null);
+    try {
+      const res = await importProductFromUrlAction(link);
+      if (!res.ok || !res.data) {
+        setImportNote({ ok: false, text: res.message ?? "Nothing could be imported from that link." });
+        return;
+      }
+      const d = res.data;
+      const cur = vRef.current;
+      const filled: string[] = [];
+      const brandMatch = d.brand ? brands.find((b) => b.name.trim().toLowerCase() === d.brand!.trim().toLowerCase()) : undefined;
+      // only empty fields are filled; existing specification rows keep their values
+      const known = new Set(cur.specs.filter((r) => r.value.trim()).map((r) => r.name.trim().toLowerCase()));
+      const addSpecs = d.specs.filter((r) => !known.has(r.name.trim().toLowerCase()) && !isProtectedSpec(r.name));
+      setV((prev) => {
+        const next = { ...prev };
+        if (!prev.name.trim() && d.name) next.name = d.name;
+        if (!prev.brand_id && brandMatch) next.brand_id = brandMatch.id;
+        if (!prev.model.trim() && d.model) next.model = d.model;
+        if (addSpecs.length) {
+          const names = new Set(addSpecs.map((r) => r.name.trim().toLowerCase()));
+          next.specs = [...prev.specs.filter((r) => r.value.trim() || !names.has(r.name.trim().toLowerCase())), ...addSpecs];
+        }
+        return next;
+      });
+      if (!cur.name.trim() && d.name) filled.push("name");
+      if (!cur.brand_id && brandMatch) filled.push("brand");
+      if (!cur.model.trim() && d.model) filled.push("model");
+      if (addSpecs.length) filled.push(`${addSpecs.length} specifications`);
+      // the phone's own photos, through the normal upload (resized, WebP, the shop's storage)
+      const room = Math.max(0, 15 - cur.images.length);
+      const photos = d.images.slice(0, room);
+      let added = 0;
+      setUploading((n) => n + photos.length);
+      for (const [i, url] of photos.entries()) {
+        try {
+          const img = await fetchImportImageAction({ pageUrl: link, imageUrl: url });
+          if (!img.ok || !img.data) continue;
+          const bin = Uint8Array.from(atob(img.data.base64), (c) => c.charCodeAt(0));
+          const up = await uploadImage(new File([bin], img.data.name, { type: img.data.type }), "products");
+          const alt = `${d.name ?? cur.name ?? "Phone"}${photos.length > 1 ? ` – photo ${i + 1}` : ""}`.slice(0, 200);
+          setV((prev) => ({ ...prev, images: [...prev.images, { key: newKey(), url: up.url, storage_path: up.path, alt_text: alt, width: up.width, height: up.height }] }));
+          added += 1;
+        } catch {
+          // a photo that can't be read is skipped
+        } finally {
+          setUploading((n) => n - 1);
+        }
+      }
+      if (added) filled.push(`${added} photo${added === 1 ? "" : "s"}`);
+      const ref = d.referencePrice ? ` Their listed price was ${formatPrice(d.referencePrice)} (not copied — enter your own selling price).` : "";
+      setImportNote({
+        ok: true,
+        text: filled.length
+          ? `Imported from ${d.sourceHost}: ${filled.join(", ")}.${ref} Check the photos, enter price, RAM and storage, then click Generate all.`
+          : `Nothing new to add: the fields were already filled.${ref}`,
+      });
+    } catch {
+      setImportNote({ ok: false, text: "The import failed. Check the link and try again." });
+    } finally {
+      setImporting(false);
+    }
   }
 
   function moveImage(index: number, dir: -1 | 1) {
@@ -570,6 +641,9 @@ export function ProductForm({
         disabled={saving || uploading > 0}
         onComplete={(sections, research) => void completeWithAi(sections, "fill", Boolean(research))}
         onCancel={cancelAi}
+        onImport={(link) => void importFromLink(link)}
+        importing={importing}
+        importNote={importNote}
         check={check}
         busySections={busySections}
         missing={missing}

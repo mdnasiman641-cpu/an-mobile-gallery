@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { AlertTriangle, CheckCircle2, ChevronDown, Eraser, RefreshCw, Search, ShieldCheck, Sparkles, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Eraser, Link2, RefreshCw, Search, ShieldCheck, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/form";
 import { Badge } from "@/components/ui/misc";
@@ -55,6 +55,10 @@ export interface AiPanelProps {
   savedStatus?: ReactNode;
   /** Extra actions for More options (edit page: Improve existing content). */
   moreActions?: ReactNode;
+  /** "Import from a link": fill name, brand, model, specifications and photos from a phone's page. */
+  onImport: (url: string) => void;
+  importing: boolean;
+  importNote: { ok: boolean; text: string } | null;
   run: CompletionRun | null;
   justCompleted: boolean;
   error: { message: string; details: string[]; draftSaved: boolean } | null;
@@ -118,6 +122,7 @@ const MORE_ACTIONS: { label: string; sections: CompletionSection[]; research?: b
 ];
 
 export function ProductAiPanel(p: AiPanelProps) {
+  const [link, setLink] = useState("");
   const completion = p.run?.completion ?? null;
   const ran = Boolean(p.run);
   const [selected, setSelected] = useState<CompletionSection[]>([]);
@@ -141,6 +146,42 @@ export function ProductAiPanel(p: AiPanelProps) {
           </p>
         </div>
       </div>
+
+      <form
+        className="mt-4 rounded-lg border border-dashed border-signal/40 bg-paper p-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (link.trim() && !p.importing) p.onImport(link.trim());
+        }}
+      >
+        <label htmlFor="import-link" className="flex items-center gap-1.5 text-sm font-semibold">
+          <Link2 className="h-4 w-4 text-signal" aria-hidden /> Import from a link <span className="font-normal text-ink-mute">(optional)</span>
+        </label>
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+          <Input
+            id="import-link"
+            type="url"
+            inputMode="url"
+            placeholder="https://www.mobiledokan.com/mobile/oppo-a6c"
+            value={link}
+            onChange={(e) => setLink(e.target.value)}
+            disabled={p.importing}
+            className="min-w-0 flex-1"
+          />
+          <Button type="submit" variant="outline" loading={p.importing} disabled={!link.trim() || p.importing || p.busy}>
+            Import details &amp; photos
+          </Button>
+        </div>
+        <p className="mt-1.5 text-xs text-ink-mute">
+          Copies the phone&rsquo;s facts (name, brand, model, specifications) and its own photos — never the other site&rsquo;s text, prices, logo or ads. Fields you already
+          filled are kept. Then enter price, RAM and storage and click Generate all: the description and SEO are written in your shop&rsquo;s own words.
+        </p>
+        {p.importNote ? (
+          <p className={`mt-2 rounded-md p-2 text-sm ${p.importNote.ok ? "bg-signal-tint text-signal-dark" : "bg-deal-tint text-deal"}`} role={p.importNote.ok ? "status" : "alert"}>
+            {p.importNote.text}
+          </p>
+        ) : null}
+      </form>
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Product name" htmlFor="quick-name" required error={p.errors.name} hint="e.g. Redmi 15">
