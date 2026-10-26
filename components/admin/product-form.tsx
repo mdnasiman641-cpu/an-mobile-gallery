@@ -46,6 +46,7 @@ import { RichText } from "@/components/ui/rich-text";
 import { ConfirmButton } from "@/components/admin/ui";
 import { uploadImage } from "@/lib/image-upload";
 import { productSeoDescription, productSeoTitle } from "@/lib/seo";
+import { buildImportContent } from "@/lib/import-content";
 import { slugify } from "@/lib/slug";
 import { cn, conditionFromName, conditionLabel, discountPercent, formatPrice, isSvg } from "@/lib/utils";
 import type { BoxValue, ProductFormValues, VariantRow } from "@/lib/product-form-values";
@@ -57,8 +58,10 @@ const AI_CLIENT_TIMEOUT_MS = 150_000;
 const TABS = ["Basic information", "Pricing", "Inventory", "Images", "Variants", "Specifications", "Description", "SEO"] as const;
 type Tab = (typeof TABS)[number];
 
-/** After "Import from a link" AI writes only these (the specifications come from the page). */
-const IMPORT_AI_FIELDS: ResultField[] = ["description", "seo_title", "seo_description"];
+/** After "Import from a link", when the page gave too few facts for the instant text, AI writes only these (the specifications always come from the page). */
+const IMPORT_AI_FIELDS: ResultField[] = ["short_description", "description", "seo_title", "seo_description"];
+
+const AUTO_PENDING = "Writing the description and SEO…";
 
 type AiRunOptions = { requirePrice?: boolean; onlyFields?: ResultField[] };
 
@@ -156,9 +159,9 @@ export function ProductForm({
   const quickRam = quickSpec(v.specs, "ram").trim();
   const quickStorage = quickSpec(v.specs, "storage").trim();
   useEffect(() => {
-    // after an import, AI starts by itself once RAM and storage are entered (2 s after the last keystroke)
+    // after an import, the description / SEO are written once RAM and storage are entered (1.2 s after the last keystroke)
     if (!autoGenerateRef.current || !quickRam || !quickStorage) return;
-    const t = setTimeout(() => startAutoGenerate(), 2000);
+    const t = setTimeout(() => startAutoGenerate(), 1200); // after typing stops
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quickRam, quickStorage]);
@@ -239,6 +242,7 @@ export function ProductForm({
       // the description and SEO title / description are written by AI right away (in the shop's own words) — or as soon
       // as RAM and storage are entered when the model comes in several versions
       autoGenerateRef.current = true;
+      autoResultRef.current = null;
       setTimeout(() => startAutoGenerate(), 50);
       if (!cur.name.trim() && d.name) filled.push("name");
       if (!cur.brand_id && brandMatch) filled.push("brand");
@@ -282,8 +286,8 @@ export function ProductForm({
         ok: true,
         text: `${filled.length ? `Imported from ${d.sourceHost}: ${filled.join(", ")}.` : "Nothing new to add: the fields were already filled."}${ref} ${
           needsMemory
-            ? `Enter the RAM and storage of your phone${versions ? ` (this model comes as ${versions})` : ""}: AI then writes the description and SEO by itself.`
-            : "AI writes the description and SEO by itself (status below) — review them, enter your selling price and save."
+            ? `Enter the RAM and storage of your phone${versions ? ` (this model comes as ${versions})` : ""}: the description and SEO are then written by themselves.`
+            : autoNote(autoResultRef.current)
         }`,
       });
     } catch {
@@ -296,15 +300,56 @@ export function ProductForm({
 
   // ---------------------------------------------------------------- automatic AI after an import
   const autoGenerateRef = useRef(false);
+  /** How the description / SEO were written after the last import: instantly from the page's facts, or by AI. */
+  const autoResultRef = useRef<"instant" | "ai" | null>(null);
+  /** The import note says how the description / SEO were written (it may be shown before that is decided). */
+  const autoNote = (r: "instant" | "ai" | null) =>
+    r === "ai"
+      ? "AI is writing the description and SEO (status below; this page had few details) — review them, enter your selling price and save."
+      : r === "instant"
+        ? "The description and SEO were written from these details (no AI needed) — review them, enter your selling price and save."
+        : AUTO_PENDING;
+  const decided = (r: "instant" | "ai") => {
+    autoResultRef.current = r;
+    setImportNote((n) => (n && n.text.includes(AUTO_PENDING) ? { ...n, text: n.text.replace(AUTO_PENDING, autoNote(r)) } : n));
+  };
   function startAutoGenerate() {
     if (!autoGenerateRef.current || busyRef.current) return;
     const cur = vRef.current;
-    if (cur.name.trim().length < 2 || !quickSpec(cur.specs, "ram").trim() || !quickSpec(cur.specs, "storage").trim()) return; // waits for RAM / storage
+    const ram = quickSpec(cur.specs, "ram").trim();
+    const storage = quickSpec(cur.specs, "storage").trim();
+    if (cur.name.trim().length < 2 || !ram || !storage) return; // waits for RAM / storage
     autoGenerateRef.current = false;
-    // after an import only the description and the SEO title / description are written (empty fields only)
     const c = formContent(cur);
-    const onlyFields = IMPORT_AI_FIELDS.filter((f) => !(f === "description" ? c.description : f === "seo_title" ? c.meta_title : c.meta_description).trim());
-    if (onlyFields.length) void completeWithAi(["description", "seo"], "missing", false, { requirePrice: false, onlyFields });
+    // 1) instantly, without AI, from the specifications imported from the page
+    const instant = buildImportContent({
+      name: cur.name.trim(),
+      brand: brands.find((b) => b.id === cur.brand_id)?.name ?? null,
+      ram,
+      storage,
+      condition: cur.condition,
+      storeName,
+      specs: cur.specs,
+    });
+    if (instant) {
+      decided("instant");
+      // only empty fields; anything already written stays
+      setV((prev) => ({
+        ...prev,
+        short_description: prev.short_description.trim() ? prev.short_description : instant.short_description,
+        description: prev.description.trim() ? prev.description : instant.description,
+        meta_title: prev.meta_title.trim() ? prev.meta_title : instant.meta_title,
+        meta_description: prev.meta_description.trim() ? prev.meta_description : instant.meta_description,
+      }));
+      return;
+    }
+    // 2) the page gave too few facts: AI writes the description and SEO (empty fields only)
+    const empty = (f: ResultField) =>
+      !(f === "short_description" ? c.short_description : f === "description" ? c.description : f === "seo_title" ? c.meta_title : c.meta_description).trim();
+    const onlyFields = IMPORT_AI_FIELDS.filter(empty);
+    if (!onlyFields.length) return;
+    decided("ai");
+    void completeWithAi(["description", "seo"], "missing", false, { requirePrice: false, onlyFields });
   }
 
   function moveImage(index: number, dir: -1 | 1) {
