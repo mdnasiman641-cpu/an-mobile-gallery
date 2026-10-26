@@ -80,6 +80,8 @@ export interface AiPanelProps {
   check: CompletionCheck | null;
   /** Sections being generated right now. */
   busySections: CompletionSection[];
+  /** Set when the running request writes only some fields (after an import: description + SEO). */
+  busyFields?: string[];
   /** Sections with empty fields in the form now. */
   missing: CompletionSection[];
   onGenerateMissing: () => void;
@@ -129,9 +131,12 @@ export function ProductAiPanel(p: AiPanelProps) {
   const blocked = p.disabled || p.busy || Boolean(p.setupMessage);
   const toggle = (s: CompletionSection) => setSelected((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
   // While a run is going, its fields show "Generating…"; the rest keep their last state.
-  const fields = (p.check?.fields ?? []).map((f) =>
-    p.busy && p.busySections.includes(f.section) ? { ...f, state: "generating" as FieldState, note: null } : f,
-  );
+  // Fields that were never asked for are not listed.
+  const fields = (p.check?.fields ?? [])
+    .map((f) =>
+      p.busy && (p.busyFields?.length ? p.busyFields.includes(f.key) : p.busySections.includes(f.section)) ? { ...f, state: "generating" as FieldState, note: null } : f,
+    )
+    .filter((f) => f.state !== "skipped");
   const failedRequired = p.check && !p.busy ? p.check.retrySections : [];
   return (
     <section aria-labelledby="ai-quick-title" className="mb-4 rounded-[var(--radius-card)] border border-signal/30 bg-surface p-4 sm:p-6">
@@ -231,7 +236,9 @@ export function ProductAiPanel(p: AiPanelProps) {
           {p.phase === "submitting"
             ? "Saving the draft…"
             : p.phase === "generating"
-              ? p.busySections.length > 1
+              ? p.busyFields?.length
+                ? "Writing the description and SEO title / description from the imported details… You can keep editing; your edits are kept."
+                : p.busySections.length > 1
                 ? `Generating product content (${p.busySections.map((s) => SECTION_LABELS[s]).join(", ")}) in one request… You can keep editing; your edits are kept.`
                 : `Generating ${p.busySections.map((s) => SECTION_LABELS[s]).join(", ")}… You can keep editing; your edits are kept.`
               : p.phase === "idle"
@@ -388,7 +395,8 @@ export function ProductAiPanel(p: AiPanelProps) {
               </div>
             ) : null}
           </dl>
-          <ResearchSummary run={p.run} researched={completion.researched} />
+          {/* after an import the facts come from the imported page: no web-research note */}
+          {completion.onlyFields?.length ? null : <ResearchSummary run={p.run} researched={completion.researched} />}
           {completion.warnings?.length ? (
             <ul className="space-y-1 rounded-lg border border-warn/40 bg-warn-tint p-3 text-sm" aria-label="Warnings">
               {completion.warnings.map((w, i) => (

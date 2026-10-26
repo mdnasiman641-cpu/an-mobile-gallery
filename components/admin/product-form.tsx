@@ -38,6 +38,7 @@ import {
   type CompletionRun,
   type CompletionSection,
   type FormContent,
+  type ResultField,
 } from "@/lib/ai/product-completion";
 import { Button } from "@/components/ui/button";
 import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/form";
@@ -55,6 +56,11 @@ const AI_CLIENT_TIMEOUT_MS = 150_000;
 
 const TABS = ["Basic information", "Pricing", "Inventory", "Images", "Variants", "Specifications", "Description", "SEO"] as const;
 type Tab = (typeof TABS)[number];
+
+/** After "Import from a link" AI writes only these (the specifications come from the page). */
+const IMPORT_AI_FIELDS: ResultField[] = ["description", "seo_title", "seo_description"];
+
+type AiRunOptions = { requirePrice?: boolean; onlyFields?: ResultField[] };
 
 const newKey = () => Math.random().toString(36).slice(2);
 
@@ -127,13 +133,14 @@ export function ProductForm({
   const [aiPhase, setAiPhase] = useState<AiPhase>("idle");
   const aiBusy = aiPhase === "submitting" || aiPhase === "generating";
   const [busySections, setBusySections] = useState<CompletionSection[]>([]);
+  const [busyFields, setBusyFields] = useState<ResultField[]>([]);
   const [justCompleted, setJustCompleted] = useState(false);
   const [aiError, setAiError] = useState<{ message: string; details: string[]; draftSaved: boolean } | null>(null);
   const [confirm, setConfirm] = useState<{ proposed: AiFormValues; conflicts: string[] } | null>(null);
   const [lastApply, setLastApply] = useState<{ applied: string[]; kept: string[] } | null>(null);
   const busyRef = useRef(false);
   // what the last request asked for (Retry repeats exactly that)
-  const lastRequestRef = useRef<{ sections: CompletionSection[]; mode: "fill" | "missing"; forceResearch: boolean } | null>(null);
+  const lastRequestRef = useRef<{ sections: CompletionSection[]; mode: "fill" | "missing"; forceResearch: boolean; opts: AiRunOptions } | null>(null);
   const aiStartedAtRef = useRef<string | null>(null);
   // the run whose answer may still be applied; Cancel moves it on so a late answer is ignored
   const runIdRef = useRef(0);
@@ -229,7 +236,7 @@ export function ProductForm({
         setV((prev) => ({ ...prev, specs: withQuickSpec(prev.specs, "storage", romOnly) }));
         filled.push(`storage ${romOnly}`);
       }
-      // description, SEO and FAQ are written by AI right away (in the shop's own words) — or as soon
+      // the description and SEO title / description are written by AI right away (in the shop's own words) — or as soon
       // as RAM and storage are entered when the model comes in several versions
       autoGenerateRef.current = true;
       setTimeout(() => startAutoGenerate(), 50);
@@ -294,8 +301,10 @@ export function ProductForm({
     const cur = vRef.current;
     if (cur.name.trim().length < 2 || !quickSpec(cur.specs, "ram").trim() || !quickSpec(cur.specs, "storage").trim()) return; // waits for RAM / storage
     autoGenerateRef.current = false;
-    const sections = missingSections(formContent(cur), run?.completion.faq.length ?? 0);
-    if (sections.length) void completeWithAi(sections, "missing", false, { requirePrice: false });
+    // after an import only the description and the SEO title / description are written (empty fields only)
+    const c = formContent(cur);
+    const onlyFields = IMPORT_AI_FIELDS.filter((f) => !(f === "description" ? c.description : f === "seo_title" ? c.meta_title : c.meta_description).trim());
+    if (onlyFields.length) void completeWithAi(["description", "seo"], "missing", false, { requirePrice: false, onlyFields });
   }
 
   function moveImage(index: number, dir: -1 | 1) {
@@ -489,7 +498,7 @@ export function ProductForm({
    * mode "fill": AI values replace earlier AI text in those parts (edits need confirmation).
    * mode "missing": only empty fields / missing spec rows are filled; nothing existing changes.
    */
-  async function completeWithAi(sections: CompletionSection[], mode: "fill" | "missing" = "fill", forceResearch = false, opts: { requirePrice?: boolean } = {}) {
+  async function completeWithAi(sections: CompletionSection[], mode: "fill" | "missing" = "fill", forceResearch = false, opts: AiRunOptions = {}) {
     if (sections.length === 0) return;
     if (busyRef.current) return; // one request at a time
     const cur = vRef.current;
@@ -512,11 +521,12 @@ export function ProductForm({
     }
     busyRef.current = true;
     const runId = ++runIdRef.current;
-    lastRequestRef.current = { sections, mode, forceResearch };
+    lastRequestRef.current = { sections, mode, forceResearch, opts };
     // the form as it was when the request started: fields edited meanwhile are never replaced
     const before = formContent(cur);
     setAiPhase("submitting");
     setBusySections(sections);
+    setBusyFields(opts.onlyFields ?? []);
     setAiError(null);
     setJustCompleted(false);
     setErrors({});
@@ -546,6 +556,7 @@ export function ProductForm({
           .slice(0, 100)
           .map((r) => ({ name: r.name.trim().slice(0, 80), value: r.value.trim().slice(0, 500) })),
         forceResearch,
+        ...(opts.onlyFields?.length ? { onlyFields: opts.onlyFields } : {}),
       });
       // stop waiting after aiTimeoutMs; the server may still finish, its answer is then ignored
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -572,7 +583,8 @@ export function ProductForm({
         return;
       }
       const data = res.data;
-      const partial = sections.length < COMPLETION_SECTIONS.length;
+      // a run of only some fields (after an import) shows just those fields
+      const partial = sections.length < COMPLETION_SECTIONS.length && !data.completion.onlyFields?.length;
       setRun((prev) => (prev && partial ? { ...data, research: data.research ?? prev.research ?? null, completion: mergeSections(prev.completion, data.completion) } : data));
       setJustCompleted(true);
       // never replace what the admin typed while the request was running
@@ -600,7 +612,7 @@ export function ProductForm({
 
   function retryAi() {
     const last = lastRequestRef.current;
-    if (last) void completeWithAi(last.sections, last.mode, last.forceResearch);
+    if (last) void completeWithAi(last.sections, last.mode, last.forceResearch, last.opts);
   }
 
   /** Stop waiting for the AI: nothing in the form changes; a late answer is ignored. */
@@ -706,6 +718,7 @@ export function ProductForm({
         importNote={importNote}
         check={check}
         busySections={busySections}
+        busyFields={busyFields}
         missing={missing}
         onGenerateMissing={() => void completeWithAi(missing, "missing")}
         run={run}

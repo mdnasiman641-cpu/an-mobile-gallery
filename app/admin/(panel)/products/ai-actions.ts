@@ -13,6 +13,7 @@ import {
   evaluateCompletion,
   fillGaps,
   mergeSections,
+  RESULT_FIELD_KEYS,
   SECTION_LABELS,
   sanitizeCompletion,
   type CompletionInput,
@@ -55,6 +56,8 @@ const inputSchema = z.object({
   knownSpecs: z.array(z.object({ name: z.string().trim().max(80), value: z.string().trim().max(500) })).max(100).optional(),
   /** "Research product": always search again instead of reusing recent research. */
   forceResearch: z.boolean().optional(),
+  /** Only these fields (after "Import from a link": description + SEO title / description). */
+  onlyFields: z.array(z.enum(RESULT_FIELD_KEYS)).min(1).max(RESULT_FIELD_KEYS.length).optional(),
 });
 
 
@@ -152,6 +155,7 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
     categoryOptions: categories.map((c) => c.name),
     sections,
     knownSpecs: (input.knownSpecs ?? []).filter((x) => x.name && x.value),
+    ...(input.onlyFields?.length ? { onlyFields: Array.from(new Set(input.onlyFields)) } : {}),
   };
 
   const taxonomy = { brands, categories };
@@ -267,7 +271,8 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
       return { ok: false, message: `${usedModel.displayName} answered, but none of the requested fields could be used (${missing.join(", ")}). Nothing in the form was changed. Try again or use another model.` };
     }
 
-    const researchNote = completion.researched
+    // after an import the facts come from the imported page (only the description and SEO are written)
+    const researchNote = completion.researched || input.onlyFields?.length
       ? null
       : `${research?.message ?? "No web research was needed for this part."} This is a draft from the AI model's own knowledge: values are marked “likely”, not verified.`;
     const createdAt = new Date().toISOString();
@@ -292,8 +297,8 @@ export async function completeProductWithAiAction(raw: unknown): Promise<ActionR
       ? prevExtras
       : {
           ...prevExtras,
-          ...(sections.includes("faq") ? { faq: completion.faq } : {}),
-          ...(sections.includes("seo") ? { keywords: completion.seo.keywords } : {}),
+          ...(sections.includes("faq") && (!input.onlyFields || input.onlyFields.includes("faq")) ? { faq: completion.faq } : {}),
+          ...(sections.includes("seo") && (!input.onlyFields || input.onlyFields.includes("keywords")) ? { keywords: completion.seo.keywords } : {}),
         };
     const prevCompletion = prev?.form_completion ?? null;
     // Regenerating one section keeps the other sections of the last result.

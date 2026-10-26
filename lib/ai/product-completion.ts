@@ -80,10 +80,14 @@ export interface CompletionInput {
   research?: ProductResearch | null;
   /** Specifications already in the form (context for description / SEO / FAQ). */
   knownSpecs?: { name: string; value: string }[];
+  /** Only these fields (after "Import from a link": description + SEO title/description). Unset = every field of the sections. */
+  onlyFields?: ResultField[];
 }
 
 export interface ProductCompletion {
   sections: CompletionSection[];
+  /** Set when only some fields of the sections were asked for; the others are left empty and not judged. */
+  onlyFields?: ResultField[];
   brand: { name: string; id: string | null } | null;
   category: { name: string; id: string | null } | null;
   model: Guess | null;
@@ -171,6 +175,20 @@ const SECTION_NOTES: Record<CompletionSection, string> = {
   faq: "faq (4-6 useful questions a buyer would ask about this exact phone)",
 };
 
+const FIELD_NOTES: Record<ResultField, string> = {
+  brand: "brand",
+  model: "model",
+  category: "category",
+  specs: "specs",
+  short_description: "short_description",
+  description: "description (the full description)",
+  highlights: "highlights",
+  seo_title: "seo.title",
+  seo_description: "seo.description",
+  keywords: "seo.keywords",
+  faq: "faq",
+};
+
 const nullableString = { type: ["string", "null"] };
 const STATUS_ENUM = ["VERIFIED", "LIKELY", "NOT_FOUND", "CONFLICT"];
 const guessSchema = {
@@ -227,7 +245,11 @@ export function buildCompletionRequest(input: CompletionInput): AiRequest {
     category_options: input.categoryOptions.slice(0, 80),
     ...(input.knownSpecs?.length ? { specifications_in_the_form: input.knownSpecs.slice(0, 80) } : {}),
   };
-  const focus = all ? "Fill in every field." : `Only these parts are needed: ${input.sections.map((s) => SECTION_NOTES[s]).join("; ")}. Leave other fields empty.`;
+  const focus = input.onlyFields?.length
+    ? `Only these fields are needed: ${input.onlyFields.map((f) => FIELD_NOTES[f]).join("; ")}. Return every other field empty (null, [] or {}); the specifications are already in the form.`
+    : all
+      ? "Fill in every field."
+      : `Only these parts are needed: ${input.sections.map((s) => SECTION_NOTES[s]).join("; ")}. Leave other fields empty.`;
   const r = input.research;
   const research =
     r && r.status === "ok"
@@ -421,7 +443,7 @@ export function sanitizeCompletion(
   }
   for (const w of strList(raw.warnings, 6, 300)) if (!MONEY_OR_REVIEWS.test(w) && !warnings.includes(w)) warnings.push(w);
 
-  return {
+  const full: ProductCompletion = {
     sections: input.sections,
     brand: want.has("basic") ? brand : null,
     category: want.has("basic") ? category : null,
@@ -447,11 +469,50 @@ export function sanitizeCompletion(
     identity,
     warnings,
   };
+  return input.onlyFields?.length ? keepOnlyFields(full, input.onlyFields) : full;
+}
+
+/** Empties every field that wasn't asked for (and the identity checks, which belong to basic / specs). */
+function keepOnlyFields(c: ProductCompletion, only: ResultField[]): ProductCompletion {
+  const k = new Set(only);
+  return {
+    ...c,
+    onlyFields: [...only],
+    shortDescription: k.has("short_description") ? c.shortDescription : null,
+    description: k.has("description") ? c.description : null,
+    highlights: k.has("highlights") ? c.highlights : [],
+    seo: {
+      title: k.has("seo_title") ? c.seo.title : null,
+      description: k.has("seo_description") ? c.seo.description : null,
+      keywords: k.has("keywords") ? c.seo.keywords : [],
+      slug: k.has("seo_title") ? c.seo.slug : null,
+    },
+    faq: k.has("faq") ? c.faq : [],
+    identity: null,
+    warnings: [],
+  };
 }
 
 /** Regenerating some sections keeps the other sections of the previous result. */
 export function mergeSections(prev: ProductCompletion, next: ProductCompletion): ProductCompletion {
   const has = (s: ProductCompletion["sections"][number]) => next.sections.includes(s);
+  if (next.onlyFields?.length) {
+    // only some fields were written: everything else stays as it was
+    const k = new Set(next.onlyFields);
+    return {
+      ...prev,
+      description: k.has("description") ? next.description : prev.description,
+      shortDescription: k.has("short_description") ? next.shortDescription : prev.shortDescription,
+      highlights: k.has("highlights") ? next.highlights : prev.highlights,
+      seo: {
+        title: k.has("seo_title") ? next.seo.title : prev.seo.title,
+        description: k.has("seo_description") ? next.seo.description : prev.seo.description,
+        keywords: k.has("keywords") ? next.seo.keywords : prev.seo.keywords,
+        slug: k.has("seo_title") ? (next.seo.slug ?? prev.seo.slug) : prev.seo.slug,
+      },
+      faq: k.has("faq") ? next.faq : prev.faq,
+    };
+  }
   return {
     sections: Array.from(new Set([...prev.sections, ...next.sections])),
     brand: has("basic") ? next.brand : prev.brand,
@@ -786,18 +847,8 @@ export function unappliedFields(current: FormContent, proposed: AiFormValues): s
 // ---------------------------------------------------------------------------
 
 export type FieldState = "pending" | "generating" | "success" | "partial" | "failed" | "skipped";
-export type ResultField =
-  | "brand"
-  | "category"
-  | "model"
-  | "specs"
-  | "short_description"
-  | "description"
-  | "highlights"
-  | "seo_title"
-  | "seo_description"
-  | "keywords"
-  | "faq";
+export const RESULT_FIELD_KEYS = ["brand", "category", "model", "specs", "short_description", "description", "highlights", "seo_title", "seo_description", "keywords", "faq"] as const;
+export type ResultField = (typeof RESULT_FIELD_KEYS)[number];
 
 export const RESULT_FIELDS: { key: ResultField; label: string; section: CompletionSection; required: boolean }[] = [
   { key: "brand", label: "Brand", section: "basic", required: true },
@@ -860,9 +911,10 @@ function textProblems(value: string, facts: { name: string; ram: string; storage
 /** Judge each requested field. A run is only "success" when nothing required is missing. */
 export function evaluateCompletion(c: ProductCompletion, facts: { name: string; ram: string; storage: string; condition: string }): CompletionCheck {
   const asked = new Set(c.sections);
+  const only = c.onlyFields?.length ? new Set(c.onlyFields) : null;
   const fields: FieldResult[] = RESULT_FIELDS.map((f) => {
     const r = (state: FieldState, note: string | null = null): FieldResult => ({ ...f, state, note });
-    if (!asked.has(f.section)) return r("skipped");
+    if (!asked.has(f.section) || (only && !only.has(f.key))) return r("skipped");
     const textField = (value: string | null, min: number): FieldResult => {
       if (!value) return r("failed", "empty");
       const problems = textProblems(value, facts);
@@ -931,6 +983,7 @@ export function fillGaps(prev: ProductCompletion, next: ProductCompletion): Prod
   const urls = new Set(prev.sources.map((x) => x.url));
   return {
     sections: Array.from(new Set([...prev.sections, ...next.sections])),
+    ...(prev.onlyFields?.length ? { onlyFields: prev.onlyFields } : {}),
     brand: prev.brand?.id ? prev.brand : (next.brand ?? prev.brand),
     category: prev.category?.id ? prev.category : (next.category ?? prev.category),
     model: usableGuess(prev.model) ? prev.model : (next.model ?? prev.model),
