@@ -146,6 +146,15 @@ export function ProductForm({
   }, [v, ai]);
 
   const set = <K extends keyof ProductFormValues>(key: K, value: ProductFormValues[K]) => setV((prev) => ({ ...prev, [key]: value }));
+  const quickRam = quickSpec(v.specs, "ram").trim();
+  const quickStorage = quickSpec(v.specs, "storage").trim();
+  useEffect(() => {
+    // after an import, AI starts by itself once RAM and storage are entered (2 s after the last keystroke)
+    if (!autoGenerateRef.current || !quickRam || !quickStorage) return;
+    const t = setTimeout(() => startAutoGenerate(), 2000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quickRam, quickStorage]);
   const hasVariants = v.variants.length > 0;
 
   // ---------------------------------------------------------------- images
@@ -204,6 +213,26 @@ export function ProductForm({
         }
         return next;
       });
+      // a model sold in ONE memory version: that is the RAM / storage (more versions: the admin chooses)
+      const only = (label: string) => {
+        const v = d.specs.find((r) => r.name === label)?.value ?? "";
+        const parts = v.split(/,|\/|\bor\b|\|/i).map((x) => x.replace(/\s+/g, "").toUpperCase()).filter((x) => /^\d+(\.\d+)?(GB|TB|MB)$/.test(x));
+        return parts.length === 1 ? parts[0] : null;
+      };
+      const ramOnly = only("RAM variants");
+      const romOnly = only("Storage variants");
+      if (ramOnly && !quickSpec(cur.specs, "ram").trim()) {
+        setV((prev) => ({ ...prev, specs: withQuickSpec(prev.specs, "ram", ramOnly) }));
+        filled.push(`RAM ${ramOnly}`);
+      }
+      if (romOnly && !quickSpec(cur.specs, "storage").trim()) {
+        setV((prev) => ({ ...prev, specs: withQuickSpec(prev.specs, "storage", romOnly) }));
+        filled.push(`storage ${romOnly}`);
+      }
+      // description, SEO and FAQ are written by AI right away (in the shop's own words) — or as soon
+      // as RAM and storage are entered when the model comes in several versions
+      autoGenerateRef.current = true;
+      setTimeout(() => startAutoGenerate(), 50);
       if (!cur.name.trim() && d.name) filled.push("name");
       if (!cur.brand_id && brandMatch) filled.push("brand");
       if (!cur.model.trim() && d.model) filled.push("model");
@@ -231,11 +260,15 @@ export function ProductForm({
       }
       if (added) filled.push(`${added} photo${added === 1 ? "" : "s"}`);
       const ref = d.referencePrice ? ` Their listed price was ${formatPrice(d.referencePrice)} (not copied — enter your own selling price).` : "";
+      const needsMemory = !(quickSpec(cur.specs, "ram").trim() || ramOnly) || !(quickSpec(cur.specs, "storage").trim() || romOnly);
+      const versions = [d.specs.find((r) => r.name === "RAM variants")?.value, d.specs.find((r) => r.name === "Storage variants")?.value].filter(Boolean).join(" / ");
       setImportNote({
         ok: true,
-        text: filled.length
-          ? `Imported from ${d.sourceHost}: ${filled.join(", ")}.${ref} Check the photos, enter price, RAM and storage, then click Generate all.`
-          : `Nothing new to add: the fields were already filled.${ref}`,
+        text: `${filled.length ? `Imported from ${d.sourceHost}: ${filled.join(", ")}.` : "Nothing new to add: the fields were already filled."}${ref} ${
+          needsMemory
+            ? `Enter the RAM and storage of your phone${versions ? ` (this model comes as ${versions})` : ""}: AI then writes the description and SEO by itself.`
+            : "AI is writing the description and SEO now — review them, enter your selling price and save."
+        }`,
       });
     } catch {
       setImportNote({ ok: false, text: "The import failed. Check the link and try again." });
@@ -243,6 +276,17 @@ export function ProductForm({
       importingRef.current = false;
       setImporting(false);
     }
+  }
+
+  // ---------------------------------------------------------------- automatic AI after an import
+  const autoGenerateRef = useRef(false);
+  function startAutoGenerate() {
+    if (!autoGenerateRef.current || busyRef.current) return;
+    const cur = vRef.current;
+    if (cur.name.trim().length < 2 || !quickSpec(cur.specs, "ram").trim() || !quickSpec(cur.specs, "storage").trim()) return; // waits for RAM / storage
+    autoGenerateRef.current = false;
+    const sections = missingSections(formContent(cur), run?.completion.faq.length ?? 0);
+    if (sections.length) void completeWithAi(sections, "missing", false, { requirePrice: false });
   }
 
   function moveImage(index: number, dir: -1 | 1) {
@@ -436,13 +480,14 @@ export function ProductForm({
    * mode "fill": AI values replace earlier AI text in those parts (edits need confirmation).
    * mode "missing": only empty fields / missing spec rows are filled; nothing existing changes.
    */
-  async function completeWithAi(sections: CompletionSection[], mode: "fill" | "missing" = "fill", forceResearch = false) {
+  async function completeWithAi(sections: CompletionSection[], mode: "fill" | "missing" = "fill", forceResearch = false, opts: { requirePrice?: boolean } = {}) {
     if (sections.length === 0) return;
     if (busyRef.current) return; // one request at a time
     const cur = vRef.current;
     const quickErrors: Record<string, string> = {};
     if (cur.name.trim().length < 2) quickErrors.name = "Enter the product name";
-    if (!(Number(cur.price) > 0) && cur.variants.length === 0) quickErrors.price = "Enter the selling price";
+    // the price is never sent to AI; after an import AI may start before it is entered (drafts may have no price)
+    if ((opts.requirePrice ?? true) && !(Number(cur.price) > 0) && cur.variants.length === 0) quickErrors.price = "Enter the selling price";
     if (!quickSpec(cur.specs, "ram").trim()) quickErrors.quick_ram = "Enter the RAM";
     if (!quickSpec(cur.specs, "storage").trim()) quickErrors.quick_storage = "Enter the ROM / storage";
     if (Object.keys(quickErrors).length) {
