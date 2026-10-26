@@ -172,8 +172,12 @@ export function ProductForm({
   // ---------------------------------------------------------------- import from a link
   const [importing, setImporting] = useState(false);
   const [importNote, setImportNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const importingRef = useRef(false);
+  // photos already taken from a source page: importing the same link again never adds them twice
+  const importedPhotosRef = useRef(new Set<string>());
   async function importFromLink(link: string) {
-    if (importing) return;
+    if (importingRef.current) return; // one import at a time (Enter + click, double click)
+    importingRef.current = true;
     setImporting(true);
     setImportNote(null);
     try {
@@ -206,7 +210,8 @@ export function ProductForm({
       if (addSpecs.length) filled.push(`${addSpecs.length} specifications`);
       // the phone's own photos, through the normal upload (resized, WebP, the shop's storage)
       const room = Math.max(0, 15 - cur.images.length);
-      const photos = d.images.slice(0, room);
+      const photos = d.images.filter((u) => !importedPhotosRef.current.has(u)).slice(0, room);
+      for (const u of photos) importedPhotosRef.current.add(u);
       let added = 0;
       setUploading((n) => n + photos.length);
       for (const [i, url] of photos.entries()) {
@@ -235,6 +240,7 @@ export function ProductForm({
     } catch {
       setImportNote({ ok: false, text: "The import failed. Check the link and try again." });
     } finally {
+      importingRef.current = false;
       setImporting(false);
     }
   }
